@@ -14,7 +14,6 @@ from collections.abc import Iterable
 
 from ..core.constants import (
     BILI_DOMAINS,
-    BV_REGEX,
     LONG_URL_REGEX,
     QQDOC_URL_REGEX,
     SHORT_URL_REGEX,
@@ -23,6 +22,7 @@ from ..core.constants import (
 
 _TRAILING_URL_CHARS = "\"'`}>]),，。)、）！!？?；;：:"
 SHORT_URL_DOMAINS = ("b23.tv", "bili2233.cn", "bili22.cn", "bili23.cn", "bili33.cn")
+_STRICT_BV_RE = re.compile(r"(?<![A-Za-z0-9])BV[0-9A-Za-z]{10}(?![A-Za-z0-9])")
 GENERIC_URL_RE = re.compile(r"https?://[^\s<>\"]+", re.IGNORECASE)
 
 # ──────────────────────────── basic ────────────────────────────────
@@ -67,7 +67,9 @@ def is_bilibili_domain(url: str) -> bool:
 def extract_bvid(text: str) -> str | None:
     if not text:
         return None
-    match = BV_REGEX.search(text)
+    if not isinstance(text, str):
+        return None
+    match = _STRICT_BV_RE.search(text)
     return match.group(0) if match else None
 
 

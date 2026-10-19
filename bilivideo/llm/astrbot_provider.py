@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 
 from ..core.exceptions import LLMError
-from ..core.logging import get_logger
+from ..core.logging import exception_summary, get_logger
 from .structured_summary import (
     SUMMARY_TOOL_NAME,
     StructuredSummaryAttempt,
@@ -42,7 +42,7 @@ class AstrbotProvider:
                 session_id=session_id or "BiliVideo_plugin",
             )
         except Exception as exc:  # pragma: no cover - relies on AstrBot
-            raise LLMError(f"AstrBot text_chat failed: {exc}") from exc
+            raise LLMError(f"AstrBot text_chat failed: {exception_summary(exc)}") from exc
         return self._response_text(response)
 
     def cache_identity(self) -> str:
@@ -98,10 +98,10 @@ class AstrbotProvider:
             )
         except Exception as exc:  # pragma: no cover - provider-specific errors
             if self._is_tool_unsupported(exc):
-                logger.info(f"AstrBot model does not support tools; using Markdown output: {exc}")
+                logger.info("AstrBot model does not support tools; using Markdown output: %s", exc)
                 self._tool_capabilities[capability_key] = False
                 return StructuredSummaryAttempt()
-            raise LLMError(f"AstrBot structured summary failed: {exc}") from exc
+            raise LLMError(f"AstrBot structured summary failed: {exception_summary(exc)}") from exc
 
         names = getattr(response, "tools_call_name", None) or []
         arguments = getattr(response, "tools_call_args", None) or []

@@ -40,12 +40,12 @@ class BilibiliAPIError(BiliVideoError):
 
 
 class RiskControlError(BiliVideoError):
-    """B 站触发了风控(412/-352)。通常需要更换 cookie 或更换 IP。"""
+    """B 站拒绝请求(412/-352)；错误本身不能确定账号或网络原因。"""
 
     def __init__(self, message: str = "B 站风控拦截") -> None:
         super().__init__(
             message,
-            user_message="❌ B 站触发风控,可能需要重新 /B站登录 或稍后重试",
+            user_message="❌ B 站接口暂时拒绝访问,请稍后重试",
         )
 
 
@@ -73,7 +73,7 @@ class DownloadError(BiliVideoError):
     def __init__(self, message: str, *, user_message: str | None = None) -> None:
         super().__init__(
             message,
-            user_message=user_message or "❌ 视频音频下载失败,可能是版权限制或视频已删除",
+            user_message=user_message or "❌ 视频音频获取失败,请稍后重试或尝试其他视频",
         )
 
 

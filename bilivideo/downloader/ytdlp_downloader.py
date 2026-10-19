@@ -12,7 +12,9 @@ import json
 import os
 import re
 import shutil
+import tempfile
 import threading
+import time
 from collections.abc import Iterable, Mapping
 from functools import lru_cache
 from hashlib import sha256
@@ -62,6 +64,42 @@ DEFAULT_SUBTITLE_LANGS: tuple[str, ...] = (
 
 class DownloadCancelledError(Exception):
     """Raised from the progress hook when the caller cancelled the download."""
+
+
+class DownloadBudgetError(DownloadError):
+    """A configured duration, byte or time budget was exceeded."""
+
+
+class _QuietYtDlpLogger:
+    """yt-dlp diagnostics can contain signed URLs; log categories only."""
+
+    def debug(self, message: str) -> None:
+        pass
+
+    def warning(self, message: str) -> None:
+        pass
+
+    def error(self, message: str) -> None:
+        logger.warning("yt-dlp stage failed; raw diagnostic omitted")
+
+
+def _audio_selector(quality: str):
+    """Select a real source audio tier; available platform tiers may coincide."""
+
+    def select(context: dict):
+        formats = context.get("formats") or []
+        candidates = [f for f in formats if f.get("vcodec") == "none" and f.get("acodec") != "none"]
+        if not candidates:
+            candidates = [f for f in formats if f.get("acodec") != "none"]
+        if not candidates:
+            return
+        ordered = sorted(candidates, key=lambda f: float(f.get("abr") or f.get("tbr") or 0))
+        index = 0 if quality == "fast" else len(ordered) // 2
+        if quality == "slow":
+            index = len(ordered) - 1
+        yield ordered[index]
+
+    return select
 
 
 class YtDlpDownloader:
@@ -138,67 +176,123 @@ class YtDlpDownloader:
         output_dir: str | Path | None = None,
         quality: str = "fast",
         cancel_event: threading.Event | None = None,
+        timeout_seconds: float = 150,
+        max_duration_minutes: int = 180,
+        max_size_mb: int = 128,
     ) -> AudioDownloadResult:
         target = Path(output_dir) if output_dir else self._data_dir
         target.mkdir(parents=True, exist_ok=True)
+        # Isolate concurrent requests and cleanup; never sweep another job's
+        # partial file, even if both requests reference the same video.
+        job_dir = Path(tempfile.mkdtemp(prefix="job_", dir=target))
+        deadline = time.monotonic() + timeout_seconds
+        max_bytes = max_size_mb * 1024 * 1024
+        success = False
+
+        def check(progress: dict | None = None) -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise DownloadCancelledError("download cancelled by caller")
+            if time.monotonic() >= deadline:
+                raise DownloadBudgetError(
+                    "download time budget exceeded",
+                    user_message="❌ 音频下载超时，可提高下载预算后重试",
+                )
+            if progress and int(progress.get("downloaded_bytes") or 0) > max_bytes:
+                raise DownloadBudgetError(
+                    "download byte budget exceeded",
+                    user_message="❌ 源音频超过大小预算，请选择更低音轨或提高大小限制",
+                )
+
+        def match_filter(info: dict, *, incomplete: bool = False) -> str | None:
+            check()
+            duration = float(info.get("duration") or 0)
+            if duration > max_duration_minutes * 60:
+                raise DownloadBudgetError(
+                    "audio duration budget exceeded",
+                    user_message="❌ 视频超过音频处理时长限制，请提高预算或使用平台字幕",
+                )
+            return None
 
         opts = {
-            "format": "bestaudio[ext=m4a]/bestaudio/best",
-            "outtmpl": str(target / "%(id)s.%(ext)s"),
-            "postprocessors": [
-                {
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": QUALITY_TO_KBPS.get(quality, "64"),
-                }
-            ],
+            "format": _audio_selector(quality),
+            "outtmpl": str(job_dir / "%(id)s.%(ext)s"),
+            "postprocessors": [{
+                "key": "FFmpegExtractAudio",
+                "preferredcodec": "mp3",
+                "preferredquality": QUALITY_TO_KBPS.get(quality, "64"),
+            }],
             "noplaylist": True,
             "quiet": True,
             "no_warnings": True,
-            "socket_timeout": YTDLP_SOCKET_TIMEOUT_SECONDS,
+            "logger": _QuietYtDlpLogger(),
+            "socket_timeout": min(YTDLP_SOCKET_TIMEOUT_SECONDS, timeout_seconds),
+            "retries": 2,
+            "fragment_retries": 2,
+            "extractor_retries": 2,
+            "file_access_retries": 1,
+            "continuedl": True,
+            "nopart": False,
+            "max_filesize": max_bytes,
+            "match_filter": match_filter,
+            "progress_hooks": [check],
+            "postprocessor_hooks": [check],
         }
         cookiefile = self._cookiefile_for(video_url)
         if cookiefile:
             opts["cookiefile"] = cookiefile
-
         ffmpeg_path = _ffmpeg_location()
         if ffmpeg_path:
             opts["ffmpeg_location"] = ffmpeg_path
 
-        if cancel_event is not None:
-            # The caller (asyncio side) abandons the executor thread on
-            # timeout; without this hook yt-dlp would keep downloading the
-            # whole file, tying up a pool thread and leaving orphan output.
-            def _abort_if_cancelled(_progress: dict) -> None:
-                if cancel_event.is_set():
-                    raise DownloadCancelledError("download cancelled by caller")
-
-            opts["progress_hooks"] = [_abort_if_cancelled]
-
         try:
-            with yt_dlp.YoutubeDL(opts) as ydl:
-                info = ydl.extract_info(video_url, download=True)
-        except DownloadCancelledError:
-            self._sweep_partial_files(target, video_url)
-            raise
-        except yt_dlp.utils.DownloadError as exc:
-            if cancel_event is not None and cancel_event.is_set():
-                # yt-dlp wraps hook exceptions into DownloadError on some paths
-                self._sweep_partial_files(target, video_url)
-                raise DownloadCancelledError("download cancelled by caller") from exc
-            raise _wrap_download_error(exc, video_url) from exc
-
-        video_id = info.get("id", "")
-        audio_path = target / f"{video_id}.mp3"
-        return AudioDownloadResult(
-            file_path=str(audio_path),
-            title=str(info.get("title", "")),
-            duration=float(info.get("duration", 0) or 0),
-            cover_url=info.get("thumbnail"),
-            platform=str(info.get("extractor_key") or info.get("extractor") or "bilibili").lower(),
-            video_id=str(video_id),
-            raw_info=dict(info),
-        )
+            # A fresh extract_info call obtains fresh media URLs after one
+            # transient failure; .part files remain available for continuation.
+            for attempt in range(2):
+                check()
+                try:
+                    with yt_dlp.YoutubeDL(opts) as ydl:
+                        info = ydl.extract_info(video_url, download=True)
+                    check()
+                    if not isinstance(info, dict):
+                        raise DownloadError("audio metadata missing")
+                    video_id = str(info.get("id") or "")
+                    audio_path = job_dir / f"{video_id}.mp3"
+                    if audio_path.parent != job_dir or not audio_path.is_file():
+                        raise DownloadError(
+                            "audio output missing or source size budget exceeded",
+                            user_message="❌ 音频未生成，可能超过大小预算或转码失败",
+                        )
+                    if not 0 < audio_path.stat().st_size <= max_bytes:
+                        raise DownloadBudgetError(
+                            "audio output byte budget exceeded",
+                            user_message="❌ 音频为空或超过处理大小限制",
+                        )
+                    success = True
+                    return AudioDownloadResult(
+                        file_path=str(audio_path),
+                        title=str(info.get("title", "")),
+                        duration=float(info.get("duration", 0) or 0),
+                        cover_url=info.get("thumbnail"),
+                        platform=str(
+                            info.get("extractor_key") or info.get("extractor") or "bilibili"
+                        ).lower(),
+                        video_id=video_id,
+                        raw_info=dict(info),
+                    )
+                except yt_dlp.utils.DownloadError as exc:
+                    check()
+                    if attempt or not _retryable_download_error(exc):
+                        raise _wrap_download_error(exc, video_url) from None
+                    logger.warning("audio download interrupted; refreshing media source once")
+                    if cancel_event is not None:
+                        if cancel_event.wait(0.6):
+                            raise DownloadCancelledError("download cancelled by caller") from None
+                    else:
+                        time.sleep(0.6)
+            raise DownloadError("audio retry budget exhausted")
+        finally:
+            if not success:
+                shutil.rmtree(job_dir, ignore_errors=True)
 
     @staticmethod
     def _sweep_partial_files(target: Path, video_url: str) -> None:
@@ -219,12 +313,43 @@ class YtDlpDownloader:
         *,
         output_dir: str | Path | None = None,
         langs: Iterable[str] | None = None,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: float = 90,
+    ) -> TranscriptResult | None:
+        target = Path(output_dir) if output_dir else self._data_dir
+        target.mkdir(parents=True, exist_ok=True)
+        job_dir = Path(tempfile.mkdtemp(prefix="job_", dir=target))
+        try:
+            return self._download_subtitles(
+                video_url, output_dir=job_dir, langs=langs,
+                cancel_event=cancel_event, timeout_seconds=timeout_seconds,
+            )
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
+
+    def _download_subtitles(
+        self,
+        video_url: str,
+        *,
+        output_dir: str | Path | None = None,
+        langs: Iterable[str] | None = None,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: float = 90,
     ) -> TranscriptResult | None:
         target = Path(output_dir) if output_dir else self._data_dir
         target.mkdir(parents=True, exist_ok=True)
         lang_list = list(langs) if langs else list(DEFAULT_SUBTITLE_LANGS)
         video_id = _extract_video_id_from_url(video_url) or _stable_video_id(video_url)
 
+        deadline = time.monotonic() + timeout_seconds
+
+        def check(progress: dict | None = None) -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise DownloadCancelledError("subtitle download cancelled")
+            if time.monotonic() >= deadline:
+                raise TranscriptionError("subtitle stage time budget exceeded")
+
+        check()
         opts = {
             "writesubtitles": True,
             "writeautomaticsub": True,
@@ -234,7 +359,11 @@ class YtDlpDownloader:
             "outtmpl": str(target / f"{video_id}.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
-            "socket_timeout": YTDLP_SOCKET_TIMEOUT_SECONDS,
+            "socket_timeout": min(YTDLP_SOCKET_TIMEOUT_SECONDS, timeout_seconds),
+            "progress_hooks": [check],
+            "logger": _QuietYtDlpLogger(),
+            "retries": 2,
+            "extractor_retries": 2,
         }
         cookiefile = self._cookiefile_for(video_url)
         if cookiefile:
@@ -243,8 +372,10 @@ class YtDlpDownloader:
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
+                check()
         except yt_dlp.utils.DownloadError as exc:
-            logger.warning(f"subtitle download failed: {exc}")
+            check()
+            logger.warning(f"subtitle download failed category={type(exc).__name__}")
             return None
 
         subtitles = info.get("requested_subtitles") or {}
@@ -283,6 +414,17 @@ _YT_BOT_CHECK_SIGNS: tuple[str, ...] = (
 )
 
 
+def _retryable_download_error(exc: Exception) -> bool:
+    """Refresh only transport/expired-media failures; never loop on 412."""
+    text = str(exc).lower()
+    if any(sign in text for sign in ("412", "429", "not available", "video unavailable", "copyright")):
+        return False
+    return any(sign in text for sign in (
+        "timed out", "timeout", "connection", "bytes read", "incomplete",
+        "remote end closed", "http error 403", "http error 410", "http error 5",
+    ))
+
+
 def _wrap_download_error(exc: Exception, video_url: str) -> DownloadError:
     """Map a yt-dlp download failure to a DownloadError with a useful hint.
 
@@ -292,18 +434,19 @@ def _wrap_download_error(exc: Exception, video_url: str) -> DownloadError:
     """
 
     message = str(exc)
+    safe_message = f"yt-dlp download failed category={type(exc).__name__}"
     if detect_platform(video_url) == "youtube" and any(
         sign in message.lower() for sign in _YT_BOT_CHECK_SIGNS
     ):
         return DownloadError(
-            message,
+            safe_message,
             user_message=(
                 "❌ YouTube 拒绝下载:需要登录验证(VPS 机房 IP 常被要求\"确认你不是机器人\")。\n"
                 "请发送 /YT登录 查看如何提供 cookies。\n"
                 "⚠️ 强烈建议使用小号/不重要的 Google 账号,有封号风险!"
             ),
         )
-    return DownloadError(message)
+    return DownloadError(safe_message)
 
 
 def _extract_video_id_from_url(url: str) -> str | None:

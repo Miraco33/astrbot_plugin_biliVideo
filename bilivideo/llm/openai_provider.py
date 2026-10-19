@@ -7,7 +7,7 @@ import asyncio
 import aiohttp
 
 from ..core.exceptions import LLMError, RateLimitError
-from ..core.logging import get_logger
+from ..core.logging import exception_summary, get_logger
 
 logger = get_logger("BiliVideo/LLM/OpenAI")
 
@@ -36,7 +36,6 @@ class OpenAICompatibleProvider:
         try:
             async with aiohttp.ClientSession(timeout=_REQUEST_TIMEOUT) as session:
                 async with session.post(self._url, json=payload, headers=headers) as resp:
-                    body = await resp.text()
                     if resp.status == 429:
                         retry_after_raw = resp.headers.get("Retry-After")
                         try:
@@ -45,12 +44,12 @@ class OpenAICompatibleProvider:
                             retry_after = None
                         raise RateLimitError(retry_after=retry_after)
                     if resp.status != 200:
-                        raise LLMError(f"OpenAI HTTP {resp.status}: {body[:200]}")
+                        raise LLMError(f"OpenAI HTTP {resp.status}")
                     data = await resp.json(content_type=None)
         except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
-            raise LLMError(f"OpenAI request failed: {exc}") from exc
+            raise LLMError(f"OpenAI request failed: {exception_summary(exc)}") from exc
 
         try:
             return str(data["choices"][0]["message"]["content"]).strip()
         except (KeyError, IndexError, TypeError) as exc:
-            raise LLMError(f"OpenAI response parse error: {exc}") from exc
+            raise LLMError(f"OpenAI response parse error: {exception_summary(exc)}") from exc

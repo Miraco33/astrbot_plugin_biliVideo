@@ -15,7 +15,7 @@
         "min": 60,
         "max": 1800,
         "description": "单次总结超时(秒)",
-        "hint": "下载 + 转写 + LLM 任意阶段超过此时长视为失败"
+        "hint": "整次处理的总预算（含下载、转写、生成）；各阶段另有独立预算，任一先耗尽即停止"
       },
       "user_cooldown_seconds": {
         "type": "int",
@@ -34,7 +34,10 @@
       "llm_provider": {
         "type": "string",
         "default": "astrbot",
-        "options": ["astrbot", "openai_compatible"],
+        "options": [
+          "astrbot",
+          "openai_compatible"
+        ],
         "description": "提供者",
         "hint": "astrbot=AstrBot 内置 / openai_compatible=自定义 OpenAI 兼容 API"
       },
@@ -77,7 +80,11 @@
       "note_style": {
         "type": "string",
         "default": "professional",
-        "options": ["concise", "detailed", "professional"],
+        "options": [
+          "concise",
+          "detailed",
+          "professional"
+        ],
         "description": "风格",
         "hint": "concise=最多8个单句核心观点 / detailed=最多20章完整记录 / professional=最多12章结构化分析"
       },
@@ -116,9 +123,51 @@
       "download_quality": {
         "type": "string",
         "default": "fast",
-        "options": ["fast", "medium", "slow"],
+        "options": [
+          "fast",
+          "medium",
+          "slow"
+        ],
         "description": "音频质量",
-        "hint": "fast=32k / medium=64k / slow=128k"
+        "hint": "选择可用源音轨的低/中/高档，再转为32/64/128k MP3；平台只有一档时源下载量相同"
+      },
+      "download_timeout_seconds": {
+        "type": "int",
+        "default": 150,
+        "min": 30,
+        "max": 1800,
+        "description": "音频下载预算(秒)",
+        "hint": "包括有限重试；单次总结总超时仍优先，可同时调整通用设置"
+      },
+      "asr_timeout_seconds": {
+        "type": "int",
+        "default": 180,
+        "min": 30,
+        "max": 1800,
+        "description": "转写阶段总预算(秒)",
+        "hint": "必剪与显式启用的备用转写共享此预算；仍受单次总结总超时约束"
+      },
+      "max_audio_duration_minutes": {
+        "type": "int",
+        "default": 180,
+        "min": 1,
+        "max": 1440,
+        "description": "无字幕视频时长上限(分钟)",
+        "hint": "仅限制需要下载音频的路径，不截断视频；超限时明确失败"
+      },
+      "max_audio_size_mb": {
+        "type": "int",
+        "default": 128,
+        "min": 1,
+        "max": 512,
+        "description": "音频文件大小上限(MiB)",
+        "hint": "限制源下载及转写文件，避免长视频占用过多磁盘或流量"
+      },
+      "fallback_asr_provider_id": {
+        "type": "string",
+        "default": "",
+        "description": "备用 AstrBot 语音识别提供商 ID",
+        "hint": "留空关闭；仅复用已配置的语音识别提供商。填写即允许必剪失败时向该提供商传输音频，可能产生费用；不自动选择或创建服务。该接口仅返回全文，无法提供逐句时间戳"
       }
     }
   },
@@ -289,7 +338,10 @@
       "access_mode": {
         "type": "string",
         "default": "blacklist",
-        "options": ["blacklist", "whitelist"],
+        "options": [
+          "blacklist",
+          "whitelist"
+        ],
         "description": "模式",
         "hint": "blacklist=列表内禁用 / whitelist=仅列表内可用"
       },

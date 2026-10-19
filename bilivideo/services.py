@@ -28,6 +28,7 @@ from .search import SearchService
 from .subscription.manager import SubscriptionManager
 from .subscription.scheduler import CheckScheduler
 from .summarize.orchestrator import SummaryOrchestrator
+from .transcription.astrbot_provider import AstrBotSTTFallback
 from .transcription.bcut_provider import BCutTranscriber
 from .transcription.pipeline import TranscriptPipeline
 
@@ -73,8 +74,19 @@ class BiliVideoServices:
             cookies=self.cookies.get(),
             youtube_cookies_file=self.youtube_cookies_file,
         )
-        self.transcriber = BCutTranscriber()
-        self.pipeline = TranscriptPipeline(self.downloader, self.transcriber)
+        self.transcriber = BCutTranscriber(timeout_seconds=config.asr_timeout_seconds)
+        fallback = (
+            AstrBotSTTFallback(astrbot_context, config.fallback_asr_provider_id)
+            if astrbot_context is not None and config.fallback_asr_provider_id else None
+        )
+        self.pipeline = TranscriptPipeline(
+            self.downloader, self.transcriber,
+            download_timeout_seconds=config.download_timeout_seconds,
+            asr_timeout_seconds=config.asr_timeout_seconds,
+            max_audio_duration_minutes=config.max_audio_duration_minutes,
+            max_audio_size_mb=config.max_audio_size_mb,
+            fallback=fallback,
+        )
 
         # LLM (runtime model override takes precedence over the config default)
         initial_provider_id = (
@@ -158,6 +170,11 @@ class BiliVideoServices:
         return self._download_task
 
     async def shutdown(self) -> None:
+        from .tools.registry import cancel_search_tasks
+
+        search_tasks = cancel_search_tasks(self)
+        if search_tasks:
+            await asyncio.gather(*search_tasks, return_exceptions=True)
         if self.scheduler is not None:
             await self.scheduler.stop()
         if self._download_task and not self._download_task.done():

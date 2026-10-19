@@ -4,6 +4,21 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.2.0 (2026-10-19) — 可靠性与主对话结果修复
+
+- 显示名改为 biliVideo（自用维护）；保留插件 name、author、原配置和数据命名空间。
+- 音频下载增加有限恢复、续传、源音轨质量选择、取消清理和预算限制。
+- 必剪请求按阶段分类、有限恢复、取消及整体预算；HTTP 412 单独分类，不承诺消除服务端拦截。
+- 支持可选已有 AstrBot STT 提供商回退，默认关闭；requirements 保持原文，不增加凭据或第三方服务。
+- 订阅保存摘要状态和各目标回执；失败不推进完成游标，自动重试有预算，/检查更新 可手动补偿。
+- 重试复用已生成摘要和成功回执；移除目标/取消订阅后撤销未完成投递。
+- 新增 bilibili_search_result，按原会话隔离并限制缓存与读取长度；后台完成内容可由主对话主动读取。
+- 移植上游 [PR #33](https://github.com/storyAura/astrbot_plugin_biliVideo/pull/33)（e7724ab）的直接 Json 小程序卡片修复，并补字符串数据兼容及无效 BV 截断校验；历史 code=-400 的实际触发输入仍待复测。
+- 运行日志统一脱敏，异常不输出原始 traceback、认证 URL 或完整会话目标。
+- 增加模拟下载/转写/取消/投递/结果读取/脱敏回归，并验证服务构造、健康命令和退出的组合契约。
+- 移除当前版本继承的两张真实聊天演示图；保留上游历史和字体许可，记录二进制来源核验限制。
+- 验证与生产验收详见维护文档。
+
 ## v2.1.1 (2026-10-19) — 自用维护源初始化
 
 - fork 更新地址改为 Miraco33/astrbot_plugin_biliVideo；保留内部名称、author 与数据命名空间。

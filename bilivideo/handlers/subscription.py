@@ -14,9 +14,8 @@ from ..api.endpoints import (
 from ..core.exceptions import BiliVideoError
 from ..parsing.url_extractor import extract_uid
 from ..services import BiliVideoServices
-from ._render_helper import render_note_components
-from ._send_helper import yield_note_response
 from ._utils import parse_command_args, require_access
+from .scheduled_push import push_callback
 
 _SAVE_FAILED_MESSAGE = "❌ 订阅数据保存失败,请稍后重试"
 
@@ -145,66 +144,23 @@ async def handle_check_updates(
     if not subs:
         yield event.plain_result("📋 当前没有订阅任何UP主,无法检查更新")  # type: ignore[attr-defined]
         return
-
     yield event.plain_result(  # type: ignore[attr-defined]
-        f"🔍 正在检查 {len(subs)} 个UP主的更新...\n这可能需要一些时间,请耐心等待"
+        f"🔍 正在检查 {len(subs)} 个UP主；未完成任务将重试，总结按推送目标发送。"
     )
-
-    found = 0
-    for up in subs:
+    completed = 0
+    pending = 0
+    exhausted = 0
+    for sub in subs:
         try:
-            # Same per-subscription lock as the scheduled push loop. The video
-            # is CLAIMED (last_bvid recorded) inside the lock so the other path
-            # can't push it too; the minutes-long generate/send runs outside
-            # the lock so a manual check never stalls the scheduled loop, and
-            # no yield happens while the lock is held.
-            latest = None
-            async with services.push_locks.acquire((origin, up.mid)):
-                fresh = await services.subscription_manager.get_subscription(origin, up.mid)
-                if fresh is None:
-                    continue
-                videos = await get_latest_videos(services.http_client, fresh.mid, count=1)
-                if not videos:
-                    continue
-                candidate = videos[0]
-                if candidate.bvid == fresh.last_bvid:
-                    continue
-                await services.subscription_manager.update_last_video(
-                    origin, fresh.mid, candidate.bvid
-                )
-                if not fresh.last_bvid:
-                    continue  # first sighting is only recorded, not pushed
-                latest = candidate
-            if latest is None:
-                continue
-            found += 1
-            yield event.plain_result(  # type: ignore[attr-defined]
-                f"🔔 UP主【{up.name}】有新视频!\n📺 {latest.title}\n⏳ 正在生成总结..."
-            )
-            try:
-                note = await services.orchestrator.generate(
-                    f"https://www.bilibili.com/video/{latest.bvid}"
-                )
-            except BiliVideoError as exc:
-                services.logger.warning(
-                    f"manual check summary failed for {up.name} bvid={latest.bvid}: {exc}"
-                )
-                yield event.plain_result(  # type: ignore[attr-defined]
-                    f"{exc.user_message}\n"
-                    "⚠️ 已记录该视频,避免下次检查重复提醒。需要重试请手动发送 "
-                    f"/总结 https://www.bilibili.com/video/{latest.bvid}"
-                )
-                continue
-            components = await render_note_components(services, note.markdown)
-            async for resp in yield_note_response(
-                services, event, components, video_info=note.video_info
-            ):
-                yield resp
-            await asyncio.sleep(2)
+            completed += await push_callback(services, origin, sub, force=True)
+            jobs = await services.subscription_manager.get_delivery_jobs(origin, sub.mid)
+            pending += sum(job.status in {"pending", "retry"} for job in jobs)
+            exhausted += sum(job.status == "exhausted" for job in jobs)
         except (BiliVideoError, OSError) as exc:
-            services.logger.warning(f"check failed for {up.name}: {exc}")
-
-    if found == 0:
-        yield event.plain_result("✅ 检查完成,所有订阅的UP主暂无新视频")  # type: ignore[attr-defined]
-    else:
-        yield event.plain_result(f"✅ 检查完成,共发现 {found} 个新视频")  # type: ignore[attr-defined]
+            services.logger.warning(f"manual subscription check failed: {type(exc).__name__}")
+            pending += 1
+        await asyncio.sleep(2)
+    yield event.plain_result(  # type: ignore[attr-defined]
+        f"✅ 检查完成：本次确认完成投递 {completed} 个；"
+        f"待重试 {pending} 个，自动重试耗尽 {exhausted} 个。"
+    )

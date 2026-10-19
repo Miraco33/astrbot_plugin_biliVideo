@@ -129,6 +129,11 @@ class PluginConfig:
     max_note_length: int = 3000
     prefer_subtitle: bool = True
     download_quality: str = "fast"
+    download_timeout_seconds: int = 150
+    asr_timeout_seconds: int = 180
+    max_audio_duration_minutes: int = 180
+    max_audio_size_mb: int = 128
+    fallback_asr_provider_id: str = ""
     enable_multi_platform: bool = False
     subtitle_langs: tuple[str, ...] = ("zh-Hans", "zh", "zh-CN", "ai-zh", "en", "en-US")
 
@@ -213,6 +218,21 @@ class PluginConfig:
             download_quality=_coerce_str(
                 flat.get("download_quality"), d("download_quality"),
                 options=tuple(QUALITY_TO_KBPS.keys()),
+            ),
+            download_timeout_seconds=_coerce_int(
+                flat.get("download_timeout_seconds"), d("download_timeout_seconds"), lo=30, hi=1800
+            ),
+            asr_timeout_seconds=_coerce_int(
+                flat.get("asr_timeout_seconds"), d("asr_timeout_seconds"), lo=30, hi=1800
+            ),
+            max_audio_duration_minutes=_coerce_int(
+                flat.get("max_audio_duration_minutes"), d("max_audio_duration_minutes"), lo=1, hi=1440
+            ),
+            max_audio_size_mb=_coerce_int(
+                flat.get("max_audio_size_mb"), d("max_audio_size_mb"), lo=1, hi=512
+            ),
+            fallback_asr_provider_id=_coerce_str(
+                flat.get("fallback_asr_provider_id"), d("fallback_asr_provider_id")
             ),
             enable_multi_platform=_coerce_bool(
                 flat.get("enable_multi_platform"), d("enable_multi_platform")

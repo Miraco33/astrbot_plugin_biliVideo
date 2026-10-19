@@ -25,6 +25,13 @@ async def handle_status(services: BiliVideoServices, event: object) -> AsyncIter
     else:
         scheduler_state = "⚠️ 已启用但未运行"
     targets = await services.subscription_manager.get_push_targets()
+    pending_jobs = exhausted_jobs = subscription_count = 0
+    for origin, subscriptions in (await services.subscription_manager.all_subscriptions()).items():
+        subscription_count += len(subscriptions)
+        for subscription in subscriptions:
+            for job in await services.subscription_manager.get_delivery_jobs(origin, subscription.mid):
+                pending_jobs += job.status in {"pending", "retry"}
+                exhausted_jobs += job.status == "exhausted"
     backends = ", ".join(services.renderer.available_backends) or "无 (将回退纯文本)"
     diagnostics = getattr(services.renderer, "backend_diagnostics", {})
     render_diag_lines = "\n".join(
@@ -57,7 +64,7 @@ async def handle_status(services: BiliVideoServices, event: object) -> AsyncIter
         multi_state = "off"
 
     body = (
-        "🩺 biliVideo 状态\n"
+        "🩺 biliVideo（自用维护）状态\n"
         "━━━━━━━━━━━━━━━━━━━\n"
         f"📌 版本: {__version__}\n"
         f"🔐 登录: {cookie_state}\n"
@@ -67,7 +74,10 @@ async def handle_status(services: BiliVideoServices, event: object) -> AsyncIter
         f"🔁 自动识别: {'开' if services.enable_miniapp_detect else '关'}\n"
         f"🌐 多平台: {multi_state}\n"
         f"📡 定时检查: {scheduler_state} (间隔 {cfg.check_interval_minutes} 分钟)\n"
-        f"📋 推送目标: {len(targets)} 个\n"
+        f"📋 订阅: {subscription_count} 个 / 推送目标: {len(targets)} 个\n"
+        f"📬 投递任务: 待处理 {pending_jobs} / 自动重试耗尽 {exhausted_jobs}\n"
+        f"🎧 下载 / 转写预算: {cfg.download_timeout_seconds} / {cfg.asr_timeout_seconds} 秒\n"
+        f"🛟 备用语音转写: {'已配置' if cfg.fallback_asr_provider_id else '关闭'}\n"
         f"🗄  视频信息缓存: {video_info_cache_size()} 条\n"
         f"⏳ 用户冷却窗口: {cfg.user_cooldown_seconds} 秒\n"
         f"🖼 图片输出: {'on' if cfg.output_image else 'off'}  / "

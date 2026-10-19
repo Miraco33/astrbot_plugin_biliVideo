@@ -4,7 +4,7 @@
 正式代码、稳定规则和故障记录均在 GitHub 维护，不建立长期本地工作区，不向插件市场或包仓库分发。
 仓库公开可见；每次提交、更新与发布前均须脱敏。
 
-当前 fork 版本 **v2.1.1**：维护源、文档和发布检查初始化，下载/转写可靠性修复仍见待办。
+当前 fork 版本 **v2.2.0**：下载/转写有限恢复、订阅失败补偿、按目标确认投递、主对话读取工具结果和运行日志脱敏。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
 
 - [维护规则](AGENTS.md)
 - [控制台更新与回滚](docs/MAINTENANCE.md)
@@ -26,8 +26,8 @@ AstrBot 已安装插件的来源独立持久化；只改主页不代表切源完
 [![AstrBot](https://img.shields.io/badge/AstrBot-v4.0%2B-blueviolet)](https://astrbot.app/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.1.0-orange)](CHANGELOG.md)
-[![Tests](https://img.shields.io/badge/tests-299%20passing-success)](tests/)
+[![Version](https://img.shields.io/badge/version-2.2.0-orange)](CHANGELOG.md)
+[![Tests](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/workflows/test.yml/badge.svg)](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/workflows/test.yml)
 
 </div>
 
@@ -54,7 +54,7 @@ biliVideo v2.0 是一次**完全重写**的工程升级。主要目标:
 ## 🚀 快速开始
 
 ```text
-1. AstrBot 插件市场搜索 biliVideo,或「安装插件 → 填 Git 仓库地址」一键安装 → 重启
+1. AstrBot「安装插件 → 从链接安装」填 https://github.com/Miraco33/astrbot_plugin_biliVideo\n   已安装上游时同名覆盖，保留配置与数据，无需因此重启容器
    依赖全部由 AstrBot 自动 pip 安装(含静态 ffmpeg + 内建中文字体),VPS / Docker 无需手动装系统依赖
 2. /B站登录  → 扫码登录
 3. /总结 https://www.bilibili.com/video/BV1xx411c7mD
@@ -74,7 +74,7 @@ biliVideo v2.0 是一次**完全重写**的工程升级。主要目标:
 | 加速 | 优先平台字幕(无字幕再下载音频转写) |
 | 长视频 | 按章节自动分图,LLM 生成的多章节内容不被截断 |
 | 安全 | 群级黑/白名单;用户冷却;并发 BV 去重 |
-| 工具 | AI function-call:`bilibili_search_list` / `bilibili_search_download` |
+| 工具 | AI function-call:`bilibili_search_list` / `bilibili_search_download` / `bilibili_search_result` |
 
 ---
 
@@ -151,7 +151,7 @@ apt install -y fonts-noto-cjk    # 或 fonts-wqy-zenhei
 | `/订阅 <UP>` | 订阅 UP 主,新视频自动推送 |
 | `/取消订阅 <UP>` | 取消订阅 |
 | `/订阅列表` | 查看当前订阅 |
-| `/检查更新` | 立即手动检查 |
+| `/检查更新` | 检查新视频并重试失败任务；按已配置目标投递 |
 
 ### 推送目标
 
@@ -211,8 +211,7 @@ C: 引用 A + "好的"            ❌ 不触发(无关键词)
 从结果里选播放量最高的 3 个,下载并总结
 ```
 
-AI 自动组合调用两个工具:`bilibili_search_list` 与 `bilibili_search_download`。
-转写文件存于 `<data_dir>/search_results/<task_id>_<keyword>/`。
+AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download` 转写。短任务直接返回内容；其余返回 `task_id`，模型应调用 `bilibili_search_result` 读取原视频文本后回答用户，可用 `video_index`、`offset` 和 `length` 分段读取。\n\n结果仅原会话可读，内存保留一小时、最多 16 个任务，每任务最多 200000 字符；超长内容明确标记截断，重载后失效。后台通知不代表主对话已读内容，已结束的模型轮次需要用户续问或模型再次调用结果工具。转写文件仍保存在部署环境的 `<data_dir>/search_results/`，不上传本仓库。
 
 ---
 
@@ -226,7 +225,7 @@ AI 自动组合调用两个工具:`bilibili_search_list` 与 `bilibili_search_do
 | `note_style` | `professional` | `concise`:最多 8 个单句核心观点 / `detailed`:最多 20 章完整记录 / `professional`:最多 12 章结构化分析 |
 | `enable_link` | `true` | 在总结中嵌入时间戳标记 |
 | `enable_summary` | `true` | 末尾添加 AI 总结段落 |
-| `download_quality` | `fast` | `fast`(32k) / `medium`(64k) / `slow`(128k) |
+| `download_quality` | `fast` | `fast`(32k) / `medium`(64k) / `slow`(128k)；同时用于源音轨排序和输出转码 |\n| `download_timeout_seconds` | `150` | 下载阶段预算，30–1800 秒 |\n| `asr_timeout_seconds` | `180` | 转写阶段预算，30–1800 秒 |\n| `max_audio_duration_minutes` | `180` | 音频最大时长，1–1440 分钟 |\n| `max_audio_size_mb` | `128` | 音频文件大小上限，1–512 MiB |\n| `fallback_asr_provider_id` | 空 | 已配置的 AstrBot STT 提供商 ID；默认关闭，启用后会把音频交给所选服务，并可能产生其费用 |
 | `prefer_subtitle` | `true` | 优先平台字幕,无字幕才下载音频 |
 | `enable_multi_platform` | `false` | 🧪 实验:`/总结` 支持 YouTube/抖音(yt-dlp,字幕优先;非中文 ASR 质量不保证)。YouTube 登录用 `/YT登录` 在聊天里贴 cookies(机器人自动保存,无需建文件;有封号风险,请用小号) |
 | `llm_provider_id` | `""` | 指定 AstrBot 内置模型 ID(留空=当前模型;用 `/总结模型` 查看可用 ID) |
@@ -254,14 +253,13 @@ AI 自动组合调用两个工具:`bilibili_search_list` 与 `bilibili_search_do
 ## 🧪 开发与测试
 
 ```bash
-git clone https://github.com/storyAura/astrbot_plugin_biliVideo
+git clone https://github.com/Miraco33/astrbot_plugin_biliVideo
 cd astrbot_plugin_biliVideo
 
 python -m pip install -r requirements.txt
 python -m pip install pytest pytest-asyncio ruff mypy
 
-python -m pytest -q
-ruff check .
+python scripts/check_publication.py\npython -m pytest -q\nruff check .
 mypy bilivideo
 ```
 
@@ -321,4 +319,4 @@ bilivideo/
 
 ## 📄 License
 
-[MIT](LICENSE) © 2025 storyAura
+代码：[MIT](LICENSE) © 2025 storyAura，并保留 BiliNote / Jeffery Huang 归属。字体分别遵循 SIL OFL，见 [Noto Sans SC](fonts/NotoSansSC-LICENSE.txt) 与 [JetBrains Mono](fonts/JetBrainsMono-LICENSE.txt)。

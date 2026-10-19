@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Any
 
+from ..core.types import LatestVideo
+from .delivery import DeliveryJob
 from .store import JsonStore
 
 
@@ -14,6 +16,7 @@ class Subscription:
     mid: str
     name: str
     last_bvid: str = ""
+    last_seen_bvid: str = ""
 
     @classmethod
     def from_mapping(cls, raw: Mapping[str, Any]) -> Subscription:
@@ -21,10 +24,11 @@ class Subscription:
             mid=str(raw.get("mid", "")),
             name=str(raw.get("name", "")),
             last_bvid=str(raw.get("last_bvid", "")),
+            last_seen_bvid=str(raw.get("last_seen_bvid", raw.get("last_bvid", ""))),
         )
 
     def to_dict(self) -> dict[str, str]:
-        return {"mid": self.mid, "name": self.name, "last_bvid": self.last_bvid}
+        return asdict(self)
 
 
 @dataclass(slots=True, frozen=True)
@@ -83,6 +87,7 @@ class SubscriptionManager:
             before = len(entry.get("up_list", []))
             entry["up_list"] = [up for up in entry.get("up_list", []) if up.get("mid") != mid]
             removed = len(entry["up_list"]) < before
+            data.get("delivery_jobs", {}).get(origin, {}).pop(mid, None)
             if not entry["up_list"]:
                 subs.pop(origin, None)
 
@@ -119,9 +124,77 @@ class SubscriptionManager:
             for up in entry.get("up_list", []):
                 if up.get("mid") == mid:
                     up["last_bvid"] = bvid
+                    up["last_seen_bvid"] = bvid
                     return
 
         await self._store.mutate(_mutate)
+
+
+    # ------------------------------------------------------------------
+    # durable delivery queue; old subscriptions.json files migrate lazily
+    # ------------------------------------------------------------------
+    async def discover_video(
+        self, origin: str, mid: str, latest: LatestVideo, targets: list[str], *, auto_summary: bool
+    ) -> None:
+        def _mutate(data: dict[str, Any]) -> None:
+            entry = data.get("subscriptions", {}).get(origin) or {}
+            up = next((item for item in entry.get("up_list", []) if item.get("mid") == mid), None)
+            if up is None:
+                return
+            seen = up.get("last_seen_bvid", up.get("last_bvid", ""))
+            if latest.bvid == seen:
+                return
+            up["last_seen_bvid"] = latest.bvid
+            if not seen:
+                up["last_bvid"] = latest.bvid
+                return  # Preserve the old first-sighting baseline behavior.
+            jobs = data.setdefault("delivery_jobs", {}).setdefault(origin, {}).setdefault(mid, {})
+            jobs.setdefault(
+                latest.bvid,
+                DeliveryJob(
+                    bvid=latest.bvid, video=asdict(latest),
+                    targets=list(dict.fromkeys(targets)), auto_summary=auto_summary,
+                ).to_dict(),
+            )
+            # Retain pending/exhausted jobs for compensation; trim only old
+            # completed records so failure cannot silently discard a video.
+            completed = [key for key, value in jobs.items() if value.get("status") == "completed"]
+            for key in completed[:-10]:
+                jobs.pop(key)
+
+        await self._store.mutate(_mutate)
+
+    async def get_delivery_jobs(self, origin: str, mid: str) -> list[DeliveryJob]:
+        data = await self._store.read()
+        jobs = data.get("delivery_jobs", {}).get(origin, {}).get(mid, {})
+        return [DeliveryJob.from_mapping(raw) for raw in jobs.values()]
+
+    async def save_delivery_job(self, origin: str, mid: str, job: DeliveryJob) -> bool:
+        saved = False
+
+        def _mutate(data: dict[str, Any]) -> None:
+            nonlocal saved
+            entry = data.get("subscriptions", {}).get(origin) or {}
+            up = next((item for item in entry.get("up_list", []) if item.get("mid") == mid), None)
+            jobs = data.get("delivery_jobs", {}).get(origin, {}).get(mid, {})
+            current = jobs.get(job.bvid)
+            if up is None or current is None:
+                return  # Unsubscribe/re-subscribe must not revive an old task.
+            # Target removal can race with lengthy generation. Never overwrite
+            # durable revocations with an old callback's in-memory snapshot.
+            job.withdrawn = list(dict.fromkeys([*current.get("withdrawn", []), *job.withdrawn]))
+            if current.get("status") == "cancelled" or all(
+                target in job.withdrawn for target in job.targets
+            ):
+                job.status = "cancelled"
+                job.error_kind = "TargetsRemoved"
+            jobs[job.bvid] = job.to_dict()
+            saved = True
+            if job.status == "completed" and job.bvid == up.get("last_seen_bvid"):
+                up["last_bvid"] = job.bvid
+
+        await self._store.mutate(_mutate)
+        return saved
 
     # ------------------------------------------------------------------
     # push targets
@@ -151,7 +224,20 @@ class SubscriptionManager:
                 if t.get("label") != identifier and t.get("origin") != identifier
             ]
             removed = len(new_targets) < len(targets)
+            revoked = {target.get("origin") for target in targets if target not in new_targets}
             data["push_targets"] = new_targets
+            for sessions in data.get("delivery_jobs", {}).values():
+                for jobs in sessions.values():
+                    for job in jobs.values():
+                        if job.get("status") in {"completed", "cancelled"}:
+                            continue
+                        withdrawn = job.setdefault("withdrawn", [])
+                        for target in job.get("targets", []):
+                            if target in revoked and target not in withdrawn:
+                                withdrawn.append(target)
+                        if all(target in withdrawn for target in job.get("targets", [])):
+                            job["status"] = "cancelled"
+                            job["error_kind"] = "TargetsRemoved"
 
         await self._store.mutate(_mutate)
         return removed

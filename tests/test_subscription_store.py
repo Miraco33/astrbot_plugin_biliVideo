@@ -165,3 +165,37 @@ async def test_closed_store_refuses_mutations(tmp_path) -> None:
         await mgr.add_subscription("o", "u2", "n2")
     # reads still work
     assert [s.mid for s in await mgr.get_subscriptions("o")] == ["u1"]
+
+
+@pytest.mark.asyncio
+async def test_closed_orphan_cannot_overwrite_reloaded_store(tmp_path) -> None:
+    """A cancelled old worker must not replace newer-instance state."""
+    path = tmp_path / "state.json"
+    old = JsonStore(path, default={"v": 0})
+    await old.mutate(lambda data: data.__setitem__("v", 0))
+    gate = threading.Event()
+    finished = threading.Event()
+    started = threading.Event()
+    original_write = old._write_atomic
+
+    def delayed(payload: str, seq: int) -> None:
+        started.set()
+        gate.wait(5)
+        try:
+            original_write(payload, seq)
+        finally:
+            finished.set()
+
+    old._write_atomic = delayed
+    task = asyncio.create_task(old.mutate(lambda data: data.__setitem__("v", 1)))
+    assert await asyncio.to_thread(started.wait, 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    old.close()
+    replacement = JsonStore(path, default={"v": 0})
+    await replacement.mutate(lambda data: data.__setitem__("v", 2))
+    gate.set()
+    assert await asyncio.to_thread(finished.wait, 5)
+    assert json.loads(path.read_text(encoding="utf-8")) == {"v": 2}
+    assert (await replacement.read())["v"] == 2

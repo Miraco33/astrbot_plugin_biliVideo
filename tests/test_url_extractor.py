@@ -152,3 +152,10 @@ class TestParseJsonCard:
             parse_json_card(text)
             == "https://www.bilibili.com/video/BV1xx411c7mD"
         )
+
+
+
+def test_rejects_truncated_or_embedded_bvid_tokens() -> None:
+    for value in ("BV1short", "BV1xx411c7mDextra", "prefixBV1xx411c7mD", "BV1xx411c7mD9"):
+        assert extract_bvid(value) is None
+    assert extract_bvid("(BV1xx411c7mD)") == "BV1xx411c7mD"
