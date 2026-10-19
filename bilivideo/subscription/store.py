@@ -53,7 +53,11 @@ class JsonStore:
     def close(self) -> None:
         """Refuse all further mutations (reads stay allowed)."""
 
-        self._closed = True
+        # Only rename/sequence checks hold this lock (never serialization or
+        # fsync). Waiting for an already-started rename makes close a barrier:
+        # after it returns, no old-instance worker can replace the state file.
+        with self._write_lock:
+            self._closed = True
 
     # ------------------------------------------------------------------
     # disk IO
@@ -109,10 +113,10 @@ class JsonStore:
             temp_path = Path(tmp.name)
         try:
             with self._write_lock:
-                if seq <= self._applied_seq:
-                    # A newer write already replaced the file; discarding this
-                    # stale (typically cancelled-and-orphaned) one keeps it
-                    # from clobbering fresher data.
+                if self._closed or seq <= self._applied_seq:
+                    # Discard closed-instance workers as well as stale writes.
+                    # Sequence numbers alone cannot protect across hot reload:
+                    # each replacement JsonStore starts its own sequence at 0.
                     temp_path.unlink(missing_ok=True)
                     return
                 temp_path.replace(self._path)
