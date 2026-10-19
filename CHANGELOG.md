@@ -10,6 +10,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - 增加 AGENTS、远端维护/更新说明及脱敏故障记录。
 - 补齐运行文件忽略项，增加标准库 publication-check 与模拟数据测试。
 - 保留现有 pytest / Ruff，增加只读 CI 权限和独立发布检查。
+- 缩短访问控制测试中的合成目标，保留前后缀冲突验证，避免被当作真实会话。
 - 补充 JetBrains Mono 官方字体许可，保留已有许可与归属。
 - requirements 原文保持不变；本版本不宣称修复下载中断、必剪 412 或订阅状态问题。
 - 验证结果以该提交的 GitHub Actions 记录为准；未完成部署验证不得记为已上线。

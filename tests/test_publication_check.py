@@ -26,7 +26,7 @@ def rules(content: str) -> set[str]:
 def git(root: Path, *arguments: str) -> None:
     subprocess.run(
         ["git", "-C", str(root), *arguments],
-        check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        check=True, capture_output=True,
     )
 
 
@@ -62,6 +62,7 @@ def test_source_terms_and_placeholders_are_allowed() -> None:
     ("sk-proj-" + "A1b2C3d4" * 5, "credential-token"),
     ("-----BEGIN " + "OPENSSH PRIVATE KEY-----", "private-key"),
     ('api_key = "' + "aB3dE6gH9jK2mN5p" + '"', "credential-value"),
+    ('llm_api_key = "' + "aB3dE6gH9jK2mN5p" + '"', "credential-value"),
     (
         "https://media.example.com/a.m4a?auth_key=" + "aB3dE6gH9jK2mN5p",
         "authenticated-url",
@@ -95,3 +96,8 @@ def test_repository_identity_and_licenses_are_required(tmp_path: Path) -> None:
     findings = check.scan_repository(tmp_path)
     assert ("metadata.yaml", 0, "metadata-name") in findings
     assert ("LICENSE", 0, "license-missing") in findings
+
+
+@pytest.mark.parametrize("name", ["cookies.txt", "youtube_cookies.txt", "bili_cookies.json"])
+def test_cookie_exports_are_runtime_files(name: str) -> None:
+    assert check.runtime_path(Path(name))

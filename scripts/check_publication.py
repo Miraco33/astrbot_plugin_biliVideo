@@ -39,7 +39,8 @@ PRIVATE_KEY = re.compile(
     r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----"
 )
 CREDENTIAL = re.compile(
-    r"""(?ix)\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|
+    r"""(?ix)(?<![\w])(?:[a-z0-9]+[_-])*
+    (?:api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|
     password|passwd|token|cookie|authorization|SESSDATA|bili_jct)
     ["']?\s*[:=]\s*["']([^"'\r\n]{16,})["']"""
 )
@@ -105,7 +106,10 @@ def runtime_path(path: Path) -> bool:
         bool(set(path.parts[:-1]) & RUNTIME_PARTS)
         or name == ".env"
         or (name.startswith(".env.") and name not in SAFE_ENV_NAMES)
-        or name in {"id_rsa", "id_ed25519", "id_ecdsa", "bili_cookies.json"}
+        or name in {
+            "id_rsa", "id_ed25519", "id_ecdsa", "bili_cookies.json",
+            "cookies.txt", "youtube_cookies.txt",
+        }
         or name.endswith(("-wal", "-shm"))
         or path.suffix.lower() in RUNTIME_SUFFIXES
         or bool(re.fullmatch(r"(?:subscriptions|push_targets|credentials|secrets?)\.(?:json|txt)", name))
@@ -117,7 +121,7 @@ def scan_repository(root: Path) -> set[tuple[str, int, str]]:
     try:
         result = subprocess.run(
             ["git", "-C", str(root), "ls-files", "--cached", "-z"],
-            check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=True, capture_output=True,
         )
     except (OSError, subprocess.CalledProcessError):
         return {(".", 0, "tracked-files-unavailable")}

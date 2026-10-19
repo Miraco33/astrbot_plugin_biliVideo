@@ -37,16 +37,16 @@ def test_empty_origin_allowed() -> None:
 def test_whitelist_rejects_suffix_collision() -> None:
     """Group id must match a whole origin segment, not a mere suffix."""
 
-    cfg = _cfg("whitelist", ("10000",))
-    assert is_allowed("aiocqhttp:GroupMessage:10000", config=cfg)
-    assert not is_allowed("aiocqhttp:GroupMessage:910000", config=cfg)
-    assert not is_allowed("aiocqhttp:GroupMessage:100001", config=cfg)
+    cfg = _cfg("whitelist", ("100",))
+    assert is_allowed("aiocqhttp:GroupMessage:100", config=cfg)
+    assert not is_allowed("aiocqhttp:GroupMessage:9100", config=cfg)
+    assert not is_allowed("aiocqhttp:GroupMessage:1001", config=cfg)
 
 
 def test_blacklist_does_not_block_suffix_collision() -> None:
-    cfg = _cfg("blacklist", ("10000",))
-    assert not is_allowed("aiocqhttp:GroupMessage:10000", config=cfg)
-    assert is_allowed("aiocqhttp:GroupMessage:910000", config=cfg)
+    cfg = _cfg("blacklist", ("100",))
+    assert not is_allowed("aiocqhttp:GroupMessage:100", config=cfg)
+    assert is_allowed("aiocqhttp:GroupMessage:9100", config=cfg)
 
 
 # ────────────────────── require_access decorator ──────────────────────

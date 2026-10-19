@@ -67,3 +67,5 @@ id_ed25519
 logs/
 runtime/
 backups/
+cookies.txt
+youtube_cookies.txt
