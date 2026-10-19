@@ -8,6 +8,7 @@ import math
 import os
 import threading
 import time
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlsplit
@@ -63,6 +64,8 @@ class BCutStageError(TranscriptionError):
         self.http_status = http_status
         self.api_code = api_code
         detail = f"BCut stage={stage} category={category}"
+        if category == "timed_out":
+            detail += " (timed out)"
         if http_status is not None:
             detail += f" http_status={http_status}"
         if api_code is not None:
@@ -123,10 +126,8 @@ def _valid_url(value: Any) -> bool:
 def _close_response(response: Any) -> None:
     close = getattr(response, "close", None)
     if close is not None:
-        try:
+        with suppress(OSError, requests.RequestException):
             close()
-        except (OSError, requests.RequestException):
-            pass
 
 
 class _UploadPart(io.RawIOBase):
