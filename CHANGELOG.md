@@ -17,7 +17,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - 运行日志统一脱敏，异常不输出原始 traceback、认证 URL 或完整会话目标。
 - 增加模拟下载/转写/取消/投递/结果读取/脱敏回归，并验证服务构造、健康命令和退出的组合契约。
 - 移除当前版本继承的两张真实聊天演示图；保留上游历史和字体许可，记录二进制来源核验限制。
-- 验证与生产验收详见维护文档。
+- [完整集成 CI](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/runs/39211703773) 全部成功；生产尚未部署，连接恢复后继续安装与真实样本验收。
 
 ## v2.1.1 (2026-10-19) — 自用维护源初始化
 
