@@ -61,26 +61,7 @@ class TranscriptPipeline:
     ) -> PipelineOutput:
         loop = asyncio.get_running_loop()
         if prefer_subtitle:
-            subtitle_cancel = threading.Event()
-            subtitle_worker = loop.run_in_executor(
-                None,
-                lambda: self._downloader.download_subtitles(
-                    video_url, langs=subtitle_langs, cancel_event=subtitle_cancel,
-                    timeout_seconds=SUBTITLE_FETCH_TIMEOUT_SECONDS,
-                ),
-            )
-            subtitle_worker.add_done_callback(self._consume_worker)
-            try:
-                transcript = await asyncio.wait_for(
-                    asyncio.shield(subtitle_worker), timeout=SUBTITLE_FETCH_TIMEOUT_SECONDS
-                )
-            except (asyncio.TimeoutError, TranscriptionError):
-                subtitle_cancel.set()
-                logger.warning("subtitle stage failed within budget; trying bounded audio path")
-                transcript = None
-            except asyncio.CancelledError:
-                subtitle_cancel.set()
-                raise
+            transcript = await self._fetch_subtitles(video_url, subtitle_langs)
             if transcript and transcript.has_content:
                 logger.info(f"subtitle hit ({len(transcript.segments)} segments)")
                 return PipelineOutput(transcript=transcript, audio=None)
@@ -115,6 +96,12 @@ class TranscriptPipeline:
         worker = None
         cancel_event = threading.Event()
         try:
+            # Preserve the legacy audio-first preference: subtitles may still
+            # avoid ASR after metadata/audio have been obtained.
+            if not prefer_subtitle:
+                transcript = await self._fetch_subtitles(video_url, subtitle_langs)
+                if transcript and transcript.has_content:
+                    return PipelineOutput(transcript=transcript, audio=audio)
             if audio.duration > self._max_duration * 60:
                 raise TranscriptionError("audio duration budget exceeded")
             if Path(audio.file_path).stat().st_size > self._max_size * 1024 * 1024:
@@ -160,6 +147,32 @@ class TranscriptPipeline:
             # it returns. Keep cleanup attached until that worker finishes.
             if worker is not None:
                 worker.add_done_callback(lambda done: self._finish_asr(done, audio))
+
+    async def _fetch_subtitles(
+        self, video_url: str, subtitle_langs: tuple[str, ...] | None
+    ) -> TranscriptResult | None:
+        loop = asyncio.get_running_loop()
+        subtitle_cancel = threading.Event()
+        subtitle_worker = loop.run_in_executor(
+            None,
+            lambda: self._downloader.download_subtitles(
+                video_url, langs=subtitle_langs, cancel_event=subtitle_cancel,
+                timeout_seconds=SUBTITLE_FETCH_TIMEOUT_SECONDS,
+            ),
+        )
+        subtitle_worker.add_done_callback(self._consume_worker)
+        try:
+            transcript = await asyncio.wait_for(
+                asyncio.shield(subtitle_worker), timeout=SUBTITLE_FETCH_TIMEOUT_SECONDS
+            )
+        except (asyncio.TimeoutError, TranscriptionError):
+            subtitle_cancel.set()
+            logger.warning("subtitle stage failed within budget; no usable transcript")
+            transcript = None
+        except asyncio.CancelledError:
+            subtitle_cancel.set()
+            raise
+        return transcript
 
     @staticmethod
     def _consume_worker(future: asyncio.Future) -> None:

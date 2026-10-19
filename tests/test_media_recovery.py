@@ -150,7 +150,10 @@ async def test_primary_failure_cleans_audio_without_implicit_fallback(tmp_path):
         raise TranscriptionError("primary unavailable")
 
     pipeline = TranscriptPipeline(
-        SimpleNamespace(download_audio=lambda *_args, **_kwargs: audio),
+        SimpleNamespace(
+            download_audio=lambda *_args, **_kwargs: audio,
+            download_subtitles=lambda *_args, **_kwargs: None,
+        ),
         SimpleNamespace(transcribe=fail),
     )
     with pytest.raises(TranscriptionError):
@@ -171,7 +174,10 @@ async def test_explicit_fallback_uses_remaining_budget_and_cleans_audio(tmp_path
             return transcript()
 
     pipeline = TranscriptPipeline(
-        SimpleNamespace(download_audio=lambda *_args, **_kwargs: audio),
+        SimpleNamespace(
+            download_audio=lambda *_args, **_kwargs: audio,
+            download_subtitles=lambda *_args, **_kwargs: None,
+        ),
         SimpleNamespace(transcribe=fail), fallback=Fallback(),
     )
     result = await pipeline.fetch("https://example.com/video", prefer_subtitle=False)
@@ -193,7 +199,9 @@ async def test_late_download_result_is_cleaned_after_timeout(tmp_path):
         return audio
 
     pipeline = TranscriptPipeline(
-        SimpleNamespace(download_audio=download),
+        SimpleNamespace(
+            download_audio=download, download_subtitles=lambda *_args, **_kwargs: None
+        ),
         SimpleNamespace(transcribe=lambda *_args: transcript()),
         download_timeout_seconds=0.02,
     )
@@ -298,3 +306,64 @@ def test_subtitle_extract_failure_cleans_all_job_files(tmp_path, monkeypatch):
     result = YtDlpDownloader(tmp_path).download_subtitles("https://example.com/video")
     assert result is None
     assert list(tmp_path.glob("job_*")) == []
+
+
+async def test_cancelled_asr_sets_event_and_cleans_audio_without_fallback(tmp_path):
+    audio = audio_file(tmp_path)
+    started = threading.Event()
+    finished = threading.Event()
+    observed = []
+
+    def transcribe(path, cancel_event):
+        started.set()
+        observed.append(cancel_event.wait(2))
+        finished.set()
+        return transcript()
+
+    pipeline = TranscriptPipeline(
+        SimpleNamespace(
+            download_audio=lambda *_args, **_kwargs: audio,
+            download_subtitles=lambda *_args, **_kwargs: None,
+        ),
+        SimpleNamespace(transcribe=transcribe),
+    )
+    task = asyncio.create_task(pipeline.fetch("https://example.com/video", prefer_subtitle=False))
+    for _attempt in range(100):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    for _attempt in range(100):
+        if finished.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert observed == [True]
+    assert not Path(audio.file_path).exists()
+
+
+async def test_audio_first_preference_still_uses_late_subtitles_without_asr(tmp_path):
+    audio = audio_file(tmp_path)
+    order = []
+
+    def download(*args, **kwargs):
+        order.append("audio")
+        return audio
+
+    def subtitles(*args, **kwargs):
+        order.append("subtitle")
+        return transcript()
+
+    def transcribe(*args):
+        pytest.fail("ASR must not run when subtitles are available")
+
+    pipeline = TranscriptPipeline(
+        SimpleNamespace(download_audio=download, download_subtitles=subtitles),
+        SimpleNamespace(transcribe=transcribe),
+    )
+    result = await pipeline.fetch("https://example.com/video", prefer_subtitle=False)
+    assert result.transcript.has_content
+    assert order == ["audio", "subtitle"]
+    assert not Path(audio.file_path).exists()
