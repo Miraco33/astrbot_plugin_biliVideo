@@ -264,7 +264,7 @@ def test_subtitle_jobs_never_share_or_sweep_other_requests(tmp_path, monkeypatch
             roots.append(root)
             subtitle = root / "BV1xx411c7mD.en.srt"
             subtitle.write_text(
-                "1\\n00:00:00,000 --> 00:00:01,000\\nsynthetic speech\\n\\n",
+                "1\n00:00:00,000 --> 00:00:01,000\nsynthetic speech\n\n",
                 encoding="utf-8",
             )
             if len(roots) == 1:
