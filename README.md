@@ -1,3 +1,21 @@
+# 自用维护 fork
+
+本仓库由 Miraco33 自用维护，源自 [storyAura/astrbot_plugin_biliVideo](https://github.com/storyAura/astrbot_plugin_biliVideo)。
+正式代码、稳定规则和故障记录均在 GitHub 维护，不建立长期本地工作区，不向插件市场或包仓库分发。
+仓库公开可见；每次提交、更新与发布前均须脱敏。
+
+当前 fork 版本 **v2.1.1**：维护源、文档和发布检查初始化，下载/转写可靠性修复仍见待办。
+
+- [维护规则](AGENTS.md)
+- [控制台更新与回滚](docs/MAINTENANCE.md)
+- [已知故障与修复待办](docs/KNOWN_ISSUES.md)
+- [验证记录](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions)
+
+AstrBot 已安装插件的来源独立持久化；只改主页不代表切源完成。保持原插件名称与作者标识，通过仓库安装同名覆盖切换，步骤见维护说明。
+以下保留上游使用文档与归属。
+
+---
+
 <div align="center">
   <img src="logo.png" alt="biliVideo" width="120">
 

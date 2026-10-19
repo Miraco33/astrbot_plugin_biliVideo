@@ -4,6 +4,16 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.1.1 (2026-10-19) — 自用维护源初始化
+
+- fork 更新地址改为 Miraco33/astrbot_plugin_biliVideo；保留内部名称、author 与数据命名空间。
+- 增加 AGENTS、远端维护/更新说明及脱敏故障记录。
+- 补齐运行文件忽略项，增加标准库 publication-check 与模拟数据测试。
+- 保留现有 pytest / Ruff，增加只读 CI 权限和独立发布检查。
+- 补充 JetBrains Mono 官方字体许可，保留已有许可与归属。
+- requirements 原文保持不变；本版本不宣称修复下载中断、必剪 412 或订阅状态问题。
+- 验证结果以该提交的 GitHub Actions 记录为准；未完成部署验证不得记为已上线。
+
 ## v2.1.0 (2026-08-29) — Markdown/LaTeX 渲染与结构化时间戳
 
 > Feature release from

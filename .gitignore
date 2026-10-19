@@ -43,3 +43,27 @@ venv/
 .venv/
 .env/
 .envrc
+
+# Never commit deployment secrets or runtime state
+.env
+.env.*
+!.env.example
+!.env.sample
+!.env.template
+*.log
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.sqlite-*
+*-wal
+*-shm
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+logs/
+runtime/
+backups/
