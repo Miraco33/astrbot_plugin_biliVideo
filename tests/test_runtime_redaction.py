@@ -254,3 +254,17 @@ def test_openai_client_error_does_not_expose_exception_body() -> None:
             assert "test_private_response_body" not in exc.user_message
         else:
             raise AssertionError("the client failure must remain visible")
+
+
+def test_fstring_exception_without_exc_info_does_not_expose_body() -> None:
+    sink = _Sink()
+    with patch.object(runtime_logging, "_astrbot_logger", sink):
+        try:
+            raise RuntimeError("test_unlabelled_private_value")
+        except RuntimeError as exc:
+            TaggedLogger("test").warning(f"stage=decode failed: {exc}")
+    output, options = sink.records[0]
+    assert "RuntimeError" in output
+    assert "stage=decode" in output
+    assert "test_unlabelled_private_value" not in output
+    assert options == {}

@@ -165,7 +165,10 @@ class TaggedLogger:
             exc = exc_info
         elif isinstance(exc_info, tuple) and len(exc_info) == 3:
             exc = exc_info[1]
-        elif exc_info:
+        else:
+            # sys.exc_info remains available in helper calls made from an
+            # except block. This also protects legacy f-string call sites
+            # that did not explicitly request a traceback.
             exc = sys.exc_info()[1]
         if isinstance(exc, BaseException):
             # Existing f-string call sites may already contain str(exc).
@@ -173,7 +176,8 @@ class TaggedLogger:
             raw = str(exc)
             if raw:
                 text = text.replace(raw, exception_summary(exc))
-            text += f" [exception={exception_summary(exc)}]"
+            if exc_info:
+                text += f" [exception={exception_summary(exc)}]"
         elif exc_info:
             text += " [traceback omitted]"
         # Host formatters may render extras or stack_info after our message was
