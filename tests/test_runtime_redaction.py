@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from bilivideo.core import logging as runtime_logging
@@ -157,3 +159,98 @@ def test_debug_gate_and_format_errors_keep_existing_behavior() -> None:
     assert "DBG phase=poll" in sink.records[0][0]
     assert "log formatting failed" in sink.records[1][0]
     assert "test_argument" not in sink.records[1][0]
+
+
+def test_astrbot_provider_does_not_log_or_wrap_remote_error_bodies() -> None:
+    from bilivideo.core.exceptions import LLMError
+    from bilivideo.llm import astrbot_provider
+
+    async def reject(**kwargs):
+        raise TypeError("unexpected keyword argument 'func_tool' test_private_response_body")
+
+    remote = SimpleNamespace(text_chat=reject, get_model=lambda: "test-model", provider_config={})
+    context = SimpleNamespace(get_using_provider=lambda: remote)
+    sink = _Sink()
+    with (
+        patch.object(runtime_logging, "_astrbot_logger", sink),
+        patch.object(astrbot_provider, "FunctionTool", lambda **kwargs: object()),
+        patch.object(astrbot_provider, "ToolSet", lambda tools: tools),
+    ):
+        provider = astrbot_provider.AstrbotProvider(context)
+        attempt = asyncio.run(provider.chat_structured_summary(
+            "test_prompt", include_ai_summary=False, style="concise"
+        ))
+        assert attempt.arguments is None
+        assert "test_private_response_body" not in sink.records[0][0]
+        assert "TypeError" in sink.records[0][0]
+        try:
+            asyncio.run(provider.chat("test_prompt"))
+        except LLMError as exc:
+            assert "test_private_response_body" not in str(exc)
+            assert "TypeError" in str(exc)
+        else:
+            raise AssertionError("the remote provider failure must remain visible")
+
+
+def test_openai_http_error_does_not_read_or_expose_response_body() -> None:
+    from bilivideo.core.exceptions import LLMError
+    from bilivideo.llm import openai_provider
+
+    class _Response:
+        status = 502
+        headers: dict[str, str] = {}
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def text(self):
+            raise AssertionError("remote error bodies must not be read")
+
+    class _Session(_Response):
+        def post(self, *args, **kwargs):
+            return _Response()
+
+    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **kwargs: _Session()):
+        provider = openai_provider.OpenAICompatibleProvider(
+            api_base="https://test-provider.invalid", api_key="test_key",
+            model="test-model", temperature=0.0,
+        )
+        try:
+            asyncio.run(provider.chat("test_prompt"))
+        except LLMError as exc:
+            assert str(exc) == "OpenAI HTTP 502"
+            assert exc.user_message == "❌ AI 服务暂时不可用,请稍后重试"
+        else:
+            raise AssertionError("the HTTP failure must remain visible")
+
+
+def test_openai_client_error_does_not_expose_exception_body() -> None:
+    from bilivideo.core.exceptions import LLMError
+    from bilivideo.llm import openai_provider
+
+    class _Session:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        def post(self, *args, **kwargs):
+            raise openai_provider.aiohttp.ClientError("test_private_response_body")
+
+    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **kwargs: _Session()):
+        provider = openai_provider.OpenAICompatibleProvider(
+            api_base="https://test-provider.invalid", api_key="test_key",
+            model="test-model", temperature=0.0,
+        )
+        try:
+            asyncio.run(provider.chat("test_prompt"))
+        except LLMError as exc:
+            assert "test_private_response_body" not in str(exc)
+            assert "ClientError" in str(exc)
+            assert "test_private_response_body" not in exc.user_message
+        else:
+            raise AssertionError("the client failure must remain visible")
