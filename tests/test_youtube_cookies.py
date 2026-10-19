@@ -32,7 +32,7 @@ def test_wrap_download_error_youtube_bot_check() -> None:
 def test_wrap_download_error_youtube_other_failure_is_generic() -> None:
     exc = Exception("ERROR: Video unavailable")
     wrapped = _wrap_download_error(exc, "https://youtu.be/xxx")
-    assert "下载失败" in wrapped.user_message  # generic copyright/deleted hint
+    assert "下载失败" in wrapped.user_message  # generic failure without assuming the cause
 
 
 def test_wrap_download_error_non_youtube_keeps_generic() -> None:

@@ -73,7 +73,7 @@ class DownloadError(BiliVideoError):
     def __init__(self, message: str, *, user_message: str | None = None) -> None:
         super().__init__(
             message,
-            user_message=user_message or "❌ 视频音频获取失败,请稍后重试或尝试其他视频",
+            user_message=user_message or "❌ 视频音频下载失败,请稍后重试或尝试其他视频",
         )
 
 
