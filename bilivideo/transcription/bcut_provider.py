@@ -118,7 +118,7 @@ def _valid_url(value: Any) -> bool:
         return False
     try:
         parsed = urlsplit(value)
-        return parsed.scheme == "https" and bool(parsed.netloc) and not parsed.username
+        return parsed.scheme in {"http", "https"} and bool(parsed.hostname) and parsed.username is None
     except ValueError:
         return False
 
@@ -384,9 +384,9 @@ class BCutTranscriber:
             operation=operation,
         )
         task_id = payload.get("task_id")
-        if not isinstance(task_id, str) or not task_id.strip():
+        if isinstance(task_id, bool) or not isinstance(task_id, (str, int)) or not str(task_id).strip():
             raise BCutStageError("create_task", "invalid_response")
-        return task_id
+        return str(task_id).strip()
 
     def _await_result(
         self,

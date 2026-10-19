@@ -290,3 +290,28 @@ def test_parse_result_preserves_text_and_timing() -> None:
 def test_invalid_budget_is_rejected(timeout) -> None:
     with pytest.raises(ValueError, match="finite and positive"):
         BCutTranscriber(timeout_seconds=timeout)
+
+
+def test_numeric_task_id_is_normalized_and_bool_is_rejected() -> None:
+    session = _Session([_Response({"code": 0, "data": {"task_id": 123}})])
+    assert BCutTranscriber()._create_task(session, _FAKE_URL) == "123"
+    invalid = _Session([_Response({"code": 0, "data": {"task_id": True}})])
+    with pytest.raises(BCutStageError, match="invalid_response"):
+        BCutTranscriber()._create_task(invalid, _FAKE_URL)
+
+
+def test_service_urls_preserve_http_and_https_without_userinfo() -> None:
+    for scheme in ("http", "https"):
+        url = f"{scheme}://example.invalid/mock-upload"
+        session = _Session([_Response({"code": 0, "data": {"task_id": "mock-task"}})])
+        assert BCutTranscriber()._create_task(session, url) == "mock-task"
+        spec = _meta(4, 4)
+        spec["upload_urls"] = [url]
+        assert BCutTranscriber()._upload_spec(spec, 4) == ([url], 4)
+    for url in (
+        "ftp://example.invalid/mock-upload",
+        "https:///mock-upload",
+        "https://mock-user@example.invalid/mock-upload",
+        "https://@example.invalid/mock-upload",
+    ):
+        assert not bcut._valid_url(url)
