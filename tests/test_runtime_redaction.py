@@ -125,6 +125,11 @@ def test_exception_tuple_and_http_status_are_retained_safely() -> None:
 
     error = _HTTPError("test_unlabelled_private_value")
     assert exception_summary(error) == "_HTTPError http_status=412"
+
+    class _StageError(Exception):
+        http_status = 412
+
+    assert exception_summary(_StageError("test_private_body")) == "_StageError http_status=412"
     sink = _Sink()
     with patch.object(runtime_logging, "_astrbot_logger", sink):
         TaggedLogger("test").warning("stage=poll failed", exc_info=(_HTTPError, error, None))
@@ -173,7 +178,7 @@ def test_astrbot_provider_does_not_log_or_wrap_remote_error_bodies() -> None:
     sink = _Sink()
     with (
         patch.object(runtime_logging, "_astrbot_logger", sink),
-        patch.object(astrbot_provider, "FunctionTool", lambda **kwargs: object()),
+        patch.object(astrbot_provider, "FunctionTool", lambda **_kwargs: object()),
         patch.object(astrbot_provider, "ToolSet", lambda tools: tools),
     ):
         provider = astrbot_provider.AstrbotProvider(context)
@@ -198,7 +203,6 @@ def test_openai_http_error_does_not_read_or_expose_response_body() -> None:
 
     class _Response:
         status = 502
-        headers: dict[str, str] = {}
 
         async def __aenter__(self):
             return self
@@ -213,7 +217,7 @@ def test_openai_http_error_does_not_read_or_expose_response_body() -> None:
         def post(self, *args, **kwargs):
             return _Response()
 
-    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **kwargs: _Session()):
+    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **_kwargs: _Session()):
         provider = openai_provider.OpenAICompatibleProvider(
             api_base="https://test-provider.invalid", api_key="test_key",
             model="test-model", temperature=0.0,
@@ -241,7 +245,7 @@ def test_openai_client_error_does_not_expose_exception_body() -> None:
         def post(self, *args, **kwargs):
             raise openai_provider.aiohttp.ClientError("test_private_response_body")
 
-    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **kwargs: _Session()):
+    with patch.object(openai_provider.aiohttp, "ClientSession", lambda **_kwargs: _Session()):
         provider = openai_provider.OpenAICompatibleProvider(
             api_base="https://test-provider.invalid", api_key="test_key",
             model="test-model", temperature=0.0,
