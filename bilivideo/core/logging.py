@@ -77,6 +77,8 @@ def exception_summary(exc: BaseException | None) -> str:
         status = getattr(response, "status_code", None)
     if status is None:
         status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(exc, "http_status", None)
     if isinstance(status, int) and not isinstance(status, bool) and 100 <= status <= 599:
         return f"{name} http_status={status}"
     return name
