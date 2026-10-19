@@ -153,7 +153,7 @@ def test_debug_gate_and_format_errors_keep_existing_behavior() -> None:
         assert not sink.records
         logger.set_debug(True)
         logger.debug("phase=%s", "poll")
-        logger.warning("malformed=%s %s", "test_argument")
+        logger.warning("malformed=%s %s", "test_argument")  # noqa: PLE1206
     assert "DBG phase=poll" in sink.records[0][0]
     assert "log formatting failed" in sink.records[1][0]
     assert "test_argument" not in sink.records[1][0]
