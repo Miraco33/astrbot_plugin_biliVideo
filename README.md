@@ -6,9 +6,9 @@
 
 当前 fork 版本 **v2.2.0**：下载/转写有限恢复、订阅失败补偿、按目标确认投递、主对话读取工具结果和运行日志脱敏。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
 
-- [维护规则](AGENTS.md)
-- [控制台更新与回滚](docs/MAINTENANCE.md)
-- [已知故障与修复待办](docs/KNOWN_ISSUES.md)
+- [维护规则](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/AGENTS.md)
+- [控制台更新与回滚](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/docs/MAINTENANCE.md)
+- [已知故障与修复待办](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/docs/KNOWN_ISSUES.md)
 - [验证记录](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions)
 
 AstrBot 已安装插件的来源独立持久化；只改主页不代表切源完成。保持原插件名称与作者标识，通过仓库安装同名覆盖切换，步骤见维护说明。
@@ -17,7 +17,7 @@ AstrBot 已安装插件的来源独立持久化；只改主页不代表切源完
 ---
 
 <div align="center">
-  <img src="logo.png" alt="biliVideo" width="120">
+  <img src="https://raw.githubusercontent.com/Miraco33/astrbot_plugin_biliVideo/main/logo.png" alt="biliVideo" width="120">
 
 # biliVideo · AstrBot B 站视频解析与 AI 总结
 
@@ -25,8 +25,8 @@ AstrBot 已安装插件的来源独立持久化；只改主页不代表切源完
 
 [![AstrBot](https://img.shields.io/badge/AstrBot-v4.0%2B-blueviolet)](https://astrbot.app/)
 [![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Version](https://img.shields.io/badge/version-2.2.0-orange)](CHANGELOG.md)
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/LICENSE)
+[![Version](https://img.shields.io/badge/version-2.2.0-orange)](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/CHANGELOG.md)
 [![Tests](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/workflows/test.yml/badge.svg)](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/workflows/test.yml)
 
 </div>
@@ -45,7 +45,7 @@ biliVideo v2.0 是一次**完全重写**的工程升级。主要目标:
 
 > 命令、配置项、行为对终端用户**完全向后兼容**。配置文件不需要改动即可升级。
 
-**v2.1.0** 完善总结图片与时间戳([#27](https://github.com/storyAura/astrbot_plugin_biliVideo/pull/27), 感谢 [@Eco404](https://github.com/Eco404)):检测到 `wkhtmltoimage` 时继续用 HTML/CSS 并在服务端预渲染 LaTeX;未安装系统渲染工具时自动用纯 Python 后备(Markdown AST + MathText + Pillow)。开启时间戳且走 AstrBot Provider 时,优先强制工具调用拿到结构化章节并校验范围/顺序,失败或不支持工具时回退原 Markdown 提示词;`openai_compatible` 自建 Provider 行为不变。无需改配置即可升级。详见 [CHANGELOG](CHANGELOG.md)。
+**v2.1.0** 完善总结图片与时间戳([#27](https://github.com/storyAura/astrbot_plugin_biliVideo/pull/27), 感谢 [@Eco404](https://github.com/Eco404)):检测到 `wkhtmltoimage` 时继续用 HTML/CSS 并在服务端预渲染 LaTeX;未安装系统渲染工具时自动用纯 Python 后备(Markdown AST + MathText + Pillow)。开启时间戳且走 AstrBot Provider 时,优先强制工具调用拿到结构化章节并校验范围/顺序,失败或不支持工具时回退原 Markdown 提示词;`openai_compatible` 自建 Provider 行为不变。无需改配置即可升级。详见 [CHANGELOG](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/CHANGELOG.md)。
 
 **v2.0.1** 是并发与健壮性修复版:手动 `/检查更新` 与定时推送不再可能重复推送同一视频(按订阅加锁);订阅数据写盘失败会回滚并提示、热重载不再可能被旧实例脏写;渲染与写盘全部移出事件循环;推送目标管理命令限制为管理员;版本号与配置默认值单一来源化。另合入引用消息中 QQ 小程序卡片的直接解析([#24](https://github.com/storyAura/astrbot_plugin_biliVideo/pull/24))。
 
@@ -54,7 +54,8 @@ biliVideo v2.0 是一次**完全重写**的工程升级。主要目标:
 ## 🚀 快速开始
 
 ```text
-1. AstrBot「安装插件 → 从链接安装」填 https://github.com/Miraco33/astrbot_plugin_biliVideo\n   已安装上游时同名覆盖，保留配置与数据，无需因此重启容器
+1. AstrBot「安装插件 → 从链接安装」填 https://github.com/Miraco33/astrbot_plugin_biliVideo
+   已安装上游时同名覆盖，保留配置与数据，无需因此重启容器
    依赖全部由 AstrBot 自动 pip 安装(含静态 ffmpeg + 内建中文字体),VPS / Docker 无需手动装系统依赖
 2. /B站登录  → 扫码登录
 3. /总结 https://www.bilibili.com/video/BV1xx411c7mD
@@ -211,7 +212,9 @@ C: 引用 A + "好的"            ❌ 不触发(无关键词)
 从结果里选播放量最高的 3 个,下载并总结
 ```
 
-AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download` 转写。短任务直接返回内容；其余返回 `task_id`，模型应调用 `bilibili_search_result` 读取原视频文本后回答用户，可用 `video_index`、`offset` 和 `length` 分段读取。\n\n结果仅原会话可读，内存保留一小时、最多 16 个任务，每任务最多 200000 字符；超长内容明确标记截断，重载后失效。后台通知不代表主对话已读内容，已结束的模型轮次需要用户续问或模型再次调用结果工具。转写文件仍保存在部署环境的 `<data_dir>/search_results/`，不上传本仓库。
+AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download` 转写。短任务直接返回内容；其余返回 `task_id`，模型应调用 `bilibili_search_result` 读取原视频文本后回答用户，可用 `video_index`、`offset` 和 `length` 分段读取。
+
+结果仅原会话可读，内存保留一小时、最多 16 个任务，每任务最多 200000 字符；超长内容明确标记截断，重载后失效。后台通知不代表主对话已读内容，已结束的模型轮次需要用户续问或模型再次调用结果工具。转写文件仍保存在部署环境的 `<data_dir>/search_results/`，不上传本仓库。
 
 ---
 
@@ -225,14 +228,17 @@ AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download
 | `note_style` | `professional` | `concise`:最多 8 个单句核心观点 / `detailed`:最多 20 章完整记录 / `professional`:最多 12 章结构化分析 |
 | `enable_link` | `true` | 在总结中嵌入时间戳标记 |
 | `enable_summary` | `true` | 末尾添加 AI 总结段落 |
-| `download_quality` | `fast` | `fast`(32k) / `medium`(64k) / `slow`(128k)；同时用于源音轨排序和输出转码 |\n| `download_timeout_seconds` | `150` | 下载阶段预算，30–1800 秒 |\n| `asr_timeout_seconds` | `180` | 转写阶段预算，30–1800 秒 |\n| `max_audio_duration_minutes` | `180` | 音频最大时长，1–1440 分钟 |\n| `max_audio_size_mb` | `128` | 音频文件大小上限，1–512 MiB |\n| `fallback_asr_provider_id` | 空 | 已配置的 AstrBot STT 提供商 ID；默认关闭，启用后会把音频交给所选服务，并可能产生其费用 |
+| `download_quality` | `fast` | `fast`(32k) / `medium`(64k) / `slow`(128k)；同时用于源音轨排序和输出转码 |
+| `download_timeout_seconds` | `150` | 下载阶段预算（含有限重试），30–1800 秒 |
+| `asr_timeout_seconds` | `180` | 必剪与显式启用的备用转写共享预算，30–1800 秒 |
+| `max_audio_duration_minutes` | `180` | 需要下载音频的视频时长上限，1–1440 分钟；超限失败，不截断视频 |
+| `max_audio_size_mb` | `128` | 源下载及转写文件大小上限，1–512 MiB |
+| `fallback_asr_provider_id` | 空 | 已配置的 AstrBot STT 提供商 ID；默认关闭，启用后会把音频交给所选服务，并可能产生其费用 |
 | `prefer_subtitle` | `true` | 优先平台字幕,无字幕才下载音频 |
 | `enable_multi_platform` | `false` | 🧪 实验:`/总结` 支持 YouTube/抖音(yt-dlp,字幕优先;非中文 ASR 质量不保证)。YouTube 登录用 `/YT登录` 在聊天里贴 cookies(机器人自动保存,无需建文件;有封号风险,请用小号) |
 | `llm_provider_id` | `""` | 指定 AstrBot 内置模型 ID(留空=当前模型;用 `/总结模型` 查看可用 ID) |
 | `enable_auto_push` | `false` | 启用定时推送新视频 |
 | `auto_push_summary` | `true` | 推送新视频时是否附带 AI 总结 |
-
-启用 `enable_link` 且使用 AstrBot 内置 Provider 时,插件会在模型声明支持工具调用后要求其提交结构化章节和整数秒时间戳,并校验时间范围与章节顺序。模型或 Provider 不支持工具调用、或结构化结果校验失败时,会自动回退到原有 Markdown 提示词。`openai_compatible` 自建 Provider 始终沿用原有 Markdown 路径,不会收到工具参数。
 | `check_interval_minutes` | `600` | 定时检查间隔 |
 | `max_subscriptions` | `20` | 每个会话最大订阅数 |
 | `enable_miniapp_detect` | `false` | 自动识别群内 B 站链接 |
@@ -246,7 +252,11 @@ AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download
 | `access_mode` | `blacklist` | `blacklist` / `whitelist` |
 | `group_list` | `""` | 黑/白名单群号,逗号分隔 |
 
-完整配置请见 `_conf_schema.json`。
+下载与转写阶段预算仍受 `processing_timeout` 的单次总结总超时约束。
+
+启用 `enable_link` 且使用 AstrBot 内置 Provider 时,插件会在模型声明支持工具调用后要求其提交结构化章节和整数秒时间戳,并校验时间范围与章节顺序。模型或 Provider 不支持工具调用、或结构化结果校验失败时,会自动回退到原有 Markdown 提示词。`openai_compatible` 自建 Provider 始终沿用原有 Markdown 路径,不会收到工具参数。
+
+完整配置请见 [_conf_schema.json](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/_conf_schema.json)。
 
 ---
 
@@ -259,7 +269,9 @@ cd astrbot_plugin_biliVideo
 python -m pip install -r requirements.txt
 python -m pip install pytest pytest-asyncio ruff mypy
 
-python scripts/check_publication.py\npython -m pytest -q\nruff check .
+python scripts/check_publication.py
+python -m pytest -q
+ruff check .
 mypy bilivideo
 ```
 
@@ -291,7 +303,7 @@ bilivideo/
 └── services.py    # 服务容器(composition root)
 ```
 
-更多请阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
+更多请阅 [CONTRIBUTING.md](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/CONTRIBUTING.md)。
 
 ---
 
@@ -319,4 +331,4 @@ bilivideo/
 
 ## 📄 License
 
-代码：[MIT](LICENSE) © 2025 storyAura，并保留 BiliNote / Jeffery Huang 归属。字体分别遵循 SIL OFL，见 [Noto Sans SC](fonts/NotoSansSC-LICENSE.txt) 与 [JetBrains Mono](fonts/JetBrainsMono-LICENSE.txt)。
+代码：[MIT](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/LICENSE) © 2025 storyAura，并保留 BiliNote / Jeffery Huang 归属。字体分别遵循 SIL OFL，见 [Noto Sans SC](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/fonts/NotoSansSC-LICENSE.txt) 与 [JetBrains Mono](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/fonts/JetBrainsMono-LICENSE.txt)。
