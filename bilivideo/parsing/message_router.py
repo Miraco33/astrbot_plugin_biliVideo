@@ -14,6 +14,7 @@ keywords) live in `bilivideo.handlers.auto_detect`, not here.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 
 from .url_extractor import find_qqdoc_url, parse_cq_json, parse_json_card
@@ -83,7 +84,12 @@ def parse_event(event: object) -> MessageContext:
                 continue
 
         if comp_type == "json" or "json" in comp_name:
-            comp_str = str(comp)
+            # NapCat Json.__str__ is a component representation, not JSON.
+            comp_data = getattr(comp, "data", None)
+            if isinstance(comp_data, (dict, list)):
+                comp_str = json.dumps(comp_data, ensure_ascii=False)
+            else:
+                comp_str = comp_data if isinstance(comp_data, str) else str(comp)
             if comp_str:
                 json_card_text = comp_str
             continue

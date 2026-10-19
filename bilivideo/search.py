@@ -19,6 +19,7 @@ from .core.exceptions import BiliVideoError
 from .core.logging import get_logger
 from .core.types import TranscriptResult, VideoInfo
 from .messaging.chunker import format_count
+from .parsing.url_extractor import extract_bvid
 from .transcription.pipeline import TranscriptPipeline
 
 logger = get_logger("BiliVideo/Search")
@@ -114,11 +115,11 @@ class SearchService:
                         bvid, folder_path, prefer_subtitle, quality, subtitle_langs
                     )
             except Exception as exc:
-                logger.warning(f"unexpected search processing failure for {bvid}: {exc}", exc_info=True)
+                logger.warning(f"unexpected search processing failure: {type(exc).__name__}")
                 video_result = VideoTranscriptResult(
                     bvid=bvid,
                     success=False,
-                    error=f"unexpected failure: {exc}",
+                    error=f"unexpected failure: {type(exc).__name__}",
                 )
 
             async with lock:
@@ -165,10 +166,13 @@ class SearchService:
         subtitle_langs: tuple[str, ...] | None = None,
     ) -> VideoTranscriptResult:
         result = VideoTranscriptResult(bvid=bvid)
+        if not isinstance(bvid, str) or extract_bvid(bvid) != bvid:
+            result.error = "invalid_bvid"
+            return result
         try:
             info = await get_video_info(self._http, bvid)
         except BiliVideoError as exc:
-            result.error = f"info lookup failed: {exc}"
+            result.error = f"info lookup failed: {type(exc).__name__}"
             return result
         result.info = info
         url = info.url
@@ -181,7 +185,7 @@ class SearchService:
                 subtitle_langs=subtitle_langs,
             )
         except BiliVideoError as exc:
-            result.error = exc.user_message
+            result.error = f"transcription failed: {type(exc).__name__}"
             return result
         finally:
             pass  # cleanup via TranscriptPipeline
@@ -190,6 +194,9 @@ class SearchService:
         self._pipeline.cleanup_audio(output.audio)
 
         result.transcript = _format_transcript(output.transcript)
+        if not result.transcript.strip():
+            result.error = "empty_transcript"
+            return result
         result.success = True
         self._save_to_file(info, result.transcript, folder_path)
         return result
@@ -224,4 +231,4 @@ def _format_transcript(transcript: TranscriptResult) -> str:
     return "\n".join(
         f"[{int(seg.start // 60):02d}:{int(seg.start % 60):02d}] {seg.text}"
         for seg in transcript.segments
-    )
+    ) or transcript.full_text.strip()

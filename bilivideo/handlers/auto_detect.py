@@ -136,7 +136,7 @@ async def _resolve_bvid(
             return bvid
         if is_bilibili_domain(bili_url):
             resolved = await services.http_client.follow_redirect(bili_url)
-            if resolved:
+            if resolved and is_bilibili_domain(resolved):
                 bvid = extract_bvid(resolved)
                 if bvid:
                     return bvid
@@ -154,7 +154,7 @@ async def _resolve_bvid(
     short_url = extract_short_url(text_pool)
     if short_url:
         resolved = await services.http_client.follow_redirect(short_url)
-        if resolved:
+        if resolved and is_bilibili_domain(resolved):
             return extract_bvid(resolved)
 
     return None
