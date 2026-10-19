@@ -54,6 +54,7 @@ class _DownloadRecord:
     error: str = ""
     videos: list[dict] = field(default_factory=list)
     summary: str = ""
+    summary_truncated: bool = False
     summary_error: str = ""
     task: asyncio.Task | None = None
 
@@ -74,7 +75,12 @@ class _DownloadResults:
 
     def create(self, origin: str) -> _DownloadRecord | None:
         self.prune()
-        if any(item.origin == origin and item.status == "running" for item in self.records.values()):
+        if any(
+            item.origin == origin and (
+                item.status == "running" or (item.task is not None and not item.task.done())
+            )
+            for item in self.records.values()
+        ):
             return None
         if len(self.records) >= _TASK_LIMIT:
             evict = next(
@@ -127,18 +133,21 @@ def _download_results(services: BiliVideoServices) -> _DownloadResults:
     return store
 
 
-def cancel_search_tasks(services: BiliVideoServices) -> None:
+def cancel_search_tasks(services: BiliVideoServices) -> tuple[asyncio.Task, ...]:
     """Cancel all tool jobs during hot reload without touching another instance."""
 
     store = getattr(services, "_bili_download_results", None)
     if store is None:
-        return
+        return ()
+    cancelled = []
     for item in store.records.values():
         if item.task is not None and not item.task.done():
             item.task.cancel()
+            cancelled.append(item.task)
             if item.status == "running":
                 item.status = "cancelled"
                 item.updated_at = time.monotonic()
+    return tuple(cancelled)
 
 
 def _tool_event(ctx) -> object | None:
@@ -167,7 +176,7 @@ def _result_payload(
         "error": item.error,
         "videos": videos,
         "summary": item.summary[:8000],
-        "summary_truncated": len(item.summary) > 8000,
+        "summary_truncated": item.summary_truncated,
         "summary_error": item.summary_error,
         "expires_after_seconds": _TASK_TTL_SECONDS,
     }
@@ -298,9 +307,10 @@ def _make_search_list_tool(services: BiliVideoServices) -> object:
         async def call(self, ctx, **kwargs):  # type: ignore[override]
             if not _tool_origin(ctx, services):
                 return "错误:当前会话不可使用视频工具"
-            keyword = (kwargs.get("keyword") or "").strip()
-            if not keyword:
+            keyword = kwargs.get("keyword")
+            if not isinstance(keyword, str) or not keyword.strip():
                 return "错误:请提供搜索关键词"
+            keyword = keyword.strip()[:500]
             try:
                 count = max(1, min(50, int(kwargs.get("count") or services.config.default_count)))
                 duration = int(kwargs.get("duration") or 0)
@@ -399,7 +409,17 @@ def _make_search_download_tool(
             store = _download_results(services)
             item = store.create(origin)
             if item is None:
-                return "错误:当前会话已有运行任务或任务队列已满，请先查询原 task_id"
+                active = next(
+                    (record for record in store.records.values()
+                     if record.origin == origin and (
+                         record.status == "running"
+                         or (record.task is not None and not record.task.done())
+                     )),
+                    None,
+                )
+                if active is not None:
+                    return _result_payload(active)
+                return "错误:任务队列已满，请稍后重试"
             task = asyncio.create_task(
                 _process_bv_list(
                     services=services,
@@ -485,12 +505,15 @@ async def _process_bv_list(
     successful = [v for v in result.videos if v.success and v.transcript]
     if successful:
         try:
-            item.summary = await _send_combined_summary(
+            summary = await _send_combined_summary(
                 services=services,
                 astrbot_context=astrbot_context,
                 event=event,
                 successful=successful,
+                task_id=item.task_id,
             )
+            item.summary = summary[:8000]
+            item.summary_truncated = len(summary) > 8000
             return
         except asyncio.CancelledError:
             raise
@@ -552,9 +575,10 @@ async def _send_combined_summary(
     astrbot_context: object,
     event: object,
     successful: list,
+    task_id: str,
 ) -> str:
     summary_prompt = build_combined_summary_prompt(successful)
-    note_text = await services.llm.chat(summary_prompt, session_id="BiliVideo_search")
+    note_text = await services.llm.chat(summary_prompt, session_id=f"BiliVideo_search_{task_id}")
 
     from ..handlers._render_helper import render_note_components  # avoid circular import at top
 

@@ -12,6 +12,8 @@ import pytest
 
 from bilivideo.tools import registry
 
+_SEND_SUMMARY = registry._send_combined_summary
+
 
 def _ctx(origin="test:GroupMessage:1"):
     return SimpleNamespace(
@@ -164,3 +166,91 @@ def test_partial_result_preserves_success_and_failure_status():
     assert payload["status"] == "partial"
     assert payload["content"]["text"] == "available"
     assert payload["videos"][1]["error"] == "video_processing_failed"
+
+
+
+async def test_repeated_download_recovers_existing_task_id():
+    services = _services()
+    gate = asyncio.Event()
+
+    async def process(**kwargs):
+        await gate.wait()
+        return _batch([_video()])
+
+    services.search_service.process_bv_list = process
+    download = registry._make_search_download_tool(services, SimpleNamespace())
+    one = json.loads(await download.call(
+        _ctx(), folder_name="synthetic", bv_list=["BV1xx411c7mD"],
+    ))
+    two = json.loads(await download.call(
+        _ctx(), folder_name="synthetic", bv_list=["BV1xx411c7mD"],
+    ))
+    assert one["task_id"] == two["task_id"]
+    assert len(registry._download_results(services).records) == 1
+    gate.set()
+    await registry._download_results(services).find(one["task_id"], "test:GroupMessage:1").task
+
+
+async def test_summary_cache_has_explicit_bound(monkeypatch):
+    monkeypatch.setattr(registry, "_send_combined_summary", AsyncMock(return_value="x" * 250_000))
+    services = _services()
+    services.search_service.process_bv_list = AsyncMock(return_value=_batch([_video()]))
+    result = json.loads(await registry._make_search_download_tool(
+        services, SimpleNamespace()
+    ).call(_ctx(), folder_name="synthetic", bv_list=["BV1xx411c7mD"]))
+    item = registry._download_results(services).find(result["task_id"], "test:GroupMessage:1")
+    await item.task
+    assert len(item.summary) == 8000
+    assert json.loads(registry._result_payload(item))["summary_truncated"] is True
+
+
+
+async def test_summary_in_progress_remains_busy_for_same_session(monkeypatch):
+    gate = asyncio.Event()
+
+    async def summarize(**kwargs):
+        await gate.wait()
+        return "synthetic summary"
+
+    monkeypatch.setattr(registry, "_send_combined_summary", summarize)
+    services = _services()
+    services.search_service.process_bv_list = AsyncMock(return_value=_batch([_video()]))
+    tool = registry._make_search_download_tool(services, SimpleNamespace())
+    first = json.loads(await tool.call(
+        _ctx(), folder_name="synthetic", bv_list=["BV1xx411c7mD"],
+    ))
+    await asyncio.sleep(0)
+    second = json.loads(await tool.call(
+        _ctx(), folder_name="synthetic", bv_list=["BV1xx411c7mD"],
+    ))
+    assert first["task_id"] == second["task_id"]
+    assert second["status"] == "completed"
+    services.search_service.process_bv_list.assert_awaited_once()
+    tasks = registry.cancel_search_tasks(services)
+    assert len(tasks) == 1
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+
+async def test_summary_provider_uses_task_namespace(monkeypatch):
+    from bilivideo.handlers import _render_helper
+
+    class Chain:
+        def message(self, text):
+            return self
+
+    monkeypatch.setattr(registry, "MessageChain", Chain)
+    monkeypatch.setattr(_render_helper, "render_note_components", AsyncMock(return_value="rendered"))
+    services = _services()
+    services.config.enable_forward_message = False
+    services.llm = SimpleNamespace(chat=AsyncMock(return_value="synthetic summary"))
+    context = SimpleNamespace(send_message=AsyncMock(return_value=True))
+    for task_id in ("synthetic_one", "synthetic_two"):
+        await _SEND_SUMMARY(
+            services=services, astrbot_context=context, event=_ctx().context.event,
+            successful=[_video()], task_id=task_id,
+        )
+    calls = services.llm.chat.await_args_list
+    assert calls[0].kwargs["session_id"] == "BiliVideo_search_synthetic_one"
+    assert calls[1].kwargs["session_id"] == "BiliVideo_search_synthetic_two"
+    assert all("GroupMessage" not in call.kwargs["session_id"] for call in calls)
