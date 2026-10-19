@@ -77,7 +77,7 @@ def test_download_refreshes_source_once_and_continues_partial(tmp_path, monkeypa
 
     monkeypatch.setattr(module.yt_dlp, "YoutubeDL", FakeDL)
     monkeypatch.setattr(module, "_ffmpeg_location", lambda: None)
-    monkeypatch.setattr(module.time, "sleep", lambda delay: None)
+    monkeypatch.setattr(module.time, "sleep", lambda _delay: None)
     result = YtDlpDownloader(tmp_path).download_audio("https://example.com/video")
     assert len(instances) == 2
     assert seen_part == [b"partial"]
@@ -150,7 +150,7 @@ async def test_primary_failure_cleans_audio_without_implicit_fallback(tmp_path):
         raise TranscriptionError("primary unavailable")
 
     pipeline = TranscriptPipeline(
-        SimpleNamespace(download_audio=lambda *args, **kwargs: audio),
+        SimpleNamespace(download_audio=lambda *_args, **_kwargs: audio),
         SimpleNamespace(transcribe=fail),
     )
     with pytest.raises(TranscriptionError):
@@ -171,7 +171,7 @@ async def test_explicit_fallback_uses_remaining_budget_and_cleans_audio(tmp_path
             return transcript()
 
     pipeline = TranscriptPipeline(
-        SimpleNamespace(download_audio=lambda *args, **kwargs: audio),
+        SimpleNamespace(download_audio=lambda *_args, **_kwargs: audio),
         SimpleNamespace(transcribe=fail), fallback=Fallback(),
     )
     result = await pipeline.fetch("https://example.com/video", prefer_subtitle=False)
@@ -194,7 +194,7 @@ async def test_late_download_result_is_cleaned_after_timeout(tmp_path):
 
     pipeline = TranscriptPipeline(
         SimpleNamespace(download_audio=download),
-        SimpleNamespace(transcribe=lambda *args: transcript()),
+        SimpleNamespace(transcribe=lambda *_args: transcript()),
         download_timeout_seconds=0.02,
     )
     with pytest.raises(BiliVideoError):
@@ -241,3 +241,60 @@ def test_media_budgets_are_validated_and_fallback_is_opt_in():
     assert config.max_audio_duration_minutes == 1
     assert config.max_audio_size_mb == 512
     assert config.fallback_asr_provider_id == ""
+
+
+def test_subtitle_jobs_never_share_or_sweep_other_requests(tmp_path, monkeypatch):
+    roots = []
+    nested = []
+    downloader = YtDlpDownloader(tmp_path)
+    video_url = "https://www.bilibili.com/video/BV1xx411c7mD"
+
+    class FakeDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            root = Path(self.opts["outtmpl"]).parent
+            roots.append(root)
+            subtitle = root / "BV1xx411c7mD.en.srt"
+            subtitle.write_text(
+                "1\\n00:00:00,000 --> 00:00:01,000\\nsynthetic speech\\n\\n",
+                encoding="utf-8",
+            )
+            if len(roots) == 1:
+                nested.append(downloader.download_subtitles(video_url, langs=("en",)))
+                assert subtitle.exists()
+            return {"requested_subtitles": {"en": {"ext": "srt"}}}
+
+    monkeypatch.setattr(module.yt_dlp, "YoutubeDL", FakeDL)
+    outer = downloader.download_subtitles(video_url, langs=("en",))
+    assert outer.has_content and nested[0].has_content
+    assert roots[0] != roots[1]
+    assert not any(root.exists() for root in roots)
+
+
+def test_subtitle_extract_failure_cleans_all_job_files(tmp_path, monkeypatch):
+    class FakeDL:
+        def __init__(self, opts):
+            self.opts = opts
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def extract_info(self, url, download=True):
+            (Path(self.opts["outtmpl"]).parent / "partial.srt").write_text("partial", encoding="utf-8")
+            raise yt_dlp.utils.DownloadError("synthetic network failure")
+
+    monkeypatch.setattr(module.yt_dlp, "YoutubeDL", FakeDL)
+    result = YtDlpDownloader(tmp_path).download_subtitles("https://example.com/video")
+    assert result is None
+    assert list(tmp_path.glob("job_*")) == []

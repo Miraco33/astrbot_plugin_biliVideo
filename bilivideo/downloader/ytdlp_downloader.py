@@ -273,7 +273,9 @@ class YtDlpDownloader:
                         title=str(info.get("title", "")),
                         duration=float(info.get("duration", 0) or 0),
                         cover_url=info.get("thumbnail"),
-                        platform=str(info.get("extractor_key") or info.get("extractor") or "bilibili").lower(),
+                        platform=str(
+                            info.get("extractor_key") or info.get("extractor") or "bilibili"
+                        ).lower(),
                         video_id=video_id,
                         raw_info=dict(info),
                     )
@@ -311,12 +313,43 @@ class YtDlpDownloader:
         *,
         output_dir: str | Path | None = None,
         langs: Iterable[str] | None = None,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: float = 90,
+    ) -> TranscriptResult | None:
+        target = Path(output_dir) if output_dir else self._data_dir
+        target.mkdir(parents=True, exist_ok=True)
+        job_dir = Path(tempfile.mkdtemp(prefix="job_", dir=target))
+        try:
+            return self._download_subtitles(
+                video_url, output_dir=job_dir, langs=langs,
+                cancel_event=cancel_event, timeout_seconds=timeout_seconds,
+            )
+        finally:
+            shutil.rmtree(job_dir, ignore_errors=True)
+
+    def _download_subtitles(
+        self,
+        video_url: str,
+        *,
+        output_dir: str | Path | None = None,
+        langs: Iterable[str] | None = None,
+        cancel_event: threading.Event | None = None,
+        timeout_seconds: float = 90,
     ) -> TranscriptResult | None:
         target = Path(output_dir) if output_dir else self._data_dir
         target.mkdir(parents=True, exist_ok=True)
         lang_list = list(langs) if langs else list(DEFAULT_SUBTITLE_LANGS)
         video_id = _extract_video_id_from_url(video_url) or _stable_video_id(video_url)
 
+        deadline = time.monotonic() + timeout_seconds
+
+        def check(progress: dict | None = None) -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise DownloadCancelledError("subtitle download cancelled")
+            if time.monotonic() >= deadline:
+                raise TranscriptionError("subtitle stage time budget exceeded")
+
+        check()
         opts = {
             "writesubtitles": True,
             "writeautomaticsub": True,
@@ -326,7 +359,8 @@ class YtDlpDownloader:
             "outtmpl": str(target / f"{video_id}.%(ext)s"),
             "quiet": True,
             "no_warnings": True,
-            "socket_timeout": YTDLP_SOCKET_TIMEOUT_SECONDS,
+            "socket_timeout": min(YTDLP_SOCKET_TIMEOUT_SECONDS, timeout_seconds),
+            "progress_hooks": [check],
             "logger": _QuietYtDlpLogger(),
             "retries": 2,
             "extractor_retries": 2,
@@ -338,7 +372,9 @@ class YtDlpDownloader:
         try:
             with yt_dlp.YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(video_url, download=True)
+                check()
         except yt_dlp.utils.DownloadError as exc:
+            check()
             logger.warning(f"subtitle download failed category={type(exc).__name__}")
             return None
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import shutil
 import threading
 import time
@@ -60,17 +61,26 @@ class TranscriptPipeline:
     ) -> PipelineOutput:
         loop = asyncio.get_running_loop()
         if prefer_subtitle:
+            subtitle_cancel = threading.Event()
+            subtitle_worker = loop.run_in_executor(
+                None,
+                lambda: self._downloader.download_subtitles(
+                    video_url, langs=subtitle_langs, cancel_event=subtitle_cancel,
+                    timeout_seconds=SUBTITLE_FETCH_TIMEOUT_SECONDS,
+                ),
+            )
+            subtitle_worker.add_done_callback(self._consume_worker)
             try:
                 transcript = await asyncio.wait_for(
-                    loop.run_in_executor(
-                        None,
-                        lambda: self._downloader.download_subtitles(video_url, langs=subtitle_langs),
-                    ),
-                    timeout=SUBTITLE_FETCH_TIMEOUT_SECONDS,
+                    asyncio.shield(subtitle_worker), timeout=SUBTITLE_FETCH_TIMEOUT_SECONDS
                 )
-            except asyncio.TimeoutError:
-                logger.warning("subtitle stage timed out; trying bounded audio path")
+            except (asyncio.TimeoutError, TranscriptionError):
+                subtitle_cancel.set()
+                logger.warning("subtitle stage failed within budget; trying bounded audio path")
                 transcript = None
+            except asyncio.CancelledError:
+                subtitle_cancel.set()
+                raise
             if transcript and transcript.has_content:
                 logger.info(f"subtitle hit ({len(transcript.segments)} segments)")
                 return PipelineOutput(transcript=transcript, audio=None)
@@ -151,6 +161,11 @@ class TranscriptPipeline:
             if worker is not None:
                 worker.add_done_callback(lambda done: self._finish_asr(done, audio))
 
+    @staticmethod
+    def _consume_worker(future: asyncio.Future) -> None:
+        with contextlib.suppress(BaseException):
+            future.result()
+
     @classmethod
     def _cleanup_download_result(cls, future: asyncio.Future) -> None:
         try:
@@ -161,10 +176,8 @@ class TranscriptPipeline:
 
     @classmethod
     def _finish_asr(cls, future: asyncio.Future, audio: AudioDownloadResult) -> None:
-        try:
+        with contextlib.suppress(BaseException):
             future.result()
-        except BaseException:
-            pass
         cls.cleanup_audio(audio)
 
     @staticmethod
