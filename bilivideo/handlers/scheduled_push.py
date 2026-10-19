@@ -150,8 +150,8 @@ async def _refresh_targets(
         job.error_kind = "TargetsRemoved"
         await manager.save_delivery_job(origin, sub.mid, job)
         return False
-    await manager.save_delivery_job(origin, sub.mid, job)
-    return True
+    saved = await manager.save_delivery_job(origin, sub.mid, job)
+    return saved and job.status != "cancelled"
 
 
 async def _notify_failure(

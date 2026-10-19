@@ -328,3 +328,51 @@ async def test_target_removed_during_generation_receives_no_summary_or_notice(se
     assert await push.push_callback(services, ORIGIN, sub) == 0
     services.astrbot_context.send_message.assert_not_awaited()
     assert (await job_of(services)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_explicit_origin_target_removal_is_not_revived_by_fallback(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    await manager.add_push_target(ORIGIN)
+    services.orchestrator.generate.side_effect = DownloadError("synthetic")
+    await push.push_callback(services, ORIGIN, sub)
+    await manager.remove_push_target(ORIGIN)
+    await manager.add_push_target(ORIGIN)  # A new registration cannot revive old jobs.
+    services.astrbot_context.send_message.reset_mock()
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert (await job_of(services)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_old_snapshot_cannot_overwrite_target_revocation(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    await manager.add_push_target(ORIGIN)
+
+    async def generate_then_revoke(url):
+        await manager.remove_push_target(ORIGIN)
+        return SimpleNamespace(markdown="summary", video_info=INFO)
+
+    services.orchestrator.generate.side_effect = generate_then_revoke
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert (await job_of(services)).withdrawn == [ORIGIN]
+    assert (await job_of(services)).status == "cancelled"
+
+
+@pytest.mark.asyncio
+async def test_resubscribe_during_generation_does_not_revive_deleted_job(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+
+    async def generate_then_resubscribe(url):
+        await manager.remove_subscription(ORIGIN, MID)
+        await manager.add_subscription(ORIGIN, MID, "Synthetic")
+        return SimpleNamespace(markdown="summary", video_info=INFO)
+
+    services.orchestrator.generate.side_effect = generate_then_resubscribe
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert await manager.get_delivery_jobs(ORIGIN, MID) == []

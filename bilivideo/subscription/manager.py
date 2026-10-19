@@ -169,20 +169,32 @@ class SubscriptionManager:
         jobs = data.get("delivery_jobs", {}).get(origin, {}).get(mid, {})
         return [DeliveryJob.from_mapping(raw) for raw in jobs.values()]
 
-    async def save_delivery_job(self, origin: str, mid: str, job: DeliveryJob) -> None:
+    async def save_delivery_job(self, origin: str, mid: str, job: DeliveryJob) -> bool:
+        saved = False
+
         def _mutate(data: dict[str, Any]) -> None:
+            nonlocal saved
             entry = data.get("subscriptions", {}).get(origin) or {}
             up = next((item for item in entry.get("up_list", []) if item.get("mid") == mid), None)
-            if up is None:
-                return
-            jobs = data.setdefault("delivery_jobs", {}).setdefault(origin, {}).setdefault(mid, {})
+            jobs = data.get("delivery_jobs", {}).get(origin, {}).get(mid, {})
+            current = jobs.get(job.bvid)
+            if up is None or current is None:
+                return  # Unsubscribe/re-subscribe must not revive an old task.
+            # Target removal can race with lengthy generation. Never overwrite
+            # durable revocations with an old callback's in-memory snapshot.
+            job.withdrawn = list(dict.fromkeys([*current.get("withdrawn", []), *job.withdrawn]))
+            if current.get("status") == "cancelled" or all(
+                target in job.withdrawn for target in job.targets
+            ):
+                job.status = "cancelled"
+                job.error_kind = "TargetsRemoved"
             jobs[job.bvid] = job.to_dict()
-            # Completion is independent of discovery and failure notices.
-            # A late older retry must not overwrite the newest completion.
+            saved = True
             if job.status == "completed" and job.bvid == up.get("last_seen_bvid"):
                 up["last_bvid"] = job.bvid
 
         await self._store.mutate(_mutate)
+        return saved
 
     # ------------------------------------------------------------------
     # push targets
@@ -212,7 +224,20 @@ class SubscriptionManager:
                 if t.get("label") != identifier and t.get("origin") != identifier
             ]
             removed = len(new_targets) < len(targets)
+            revoked = {target.get("origin") for target in targets if target not in new_targets}
             data["push_targets"] = new_targets
+            for sessions in data.get("delivery_jobs", {}).values():
+                for jobs in sessions.values():
+                    for job in jobs.values():
+                        if job.get("status") in {"completed", "cancelled"}:
+                            continue
+                        withdrawn = job.setdefault("withdrawn", [])
+                        for target in job.get("targets", []):
+                            if target in revoked and target not in withdrawn:
+                                withdrawn.append(target)
+                        if all(target in withdrawn for target in job.get("targets", [])):
+                            job["status"] = "cancelled"
+                            job["error_kind"] = "TargetsRemoved"
 
         await self._store.mutate(_mutate)
         return removed
