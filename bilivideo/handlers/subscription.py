@@ -14,8 +14,8 @@ from ..api.endpoints import (
 from ..core.exceptions import BiliVideoError
 from ..parsing.url_extractor import extract_uid
 from ..services import BiliVideoServices
-from .scheduled_push import push_callback
 from ._utils import parse_command_args, require_access
+from .scheduled_push import push_callback
 
 _SAVE_FAILED_MESSAGE = "❌ 订阅数据保存失败,请稍后重试"
 
@@ -154,7 +154,7 @@ async def handle_check_updates(
         try:
             completed += await push_callback(services, origin, sub, force=True)
             jobs = await services.subscription_manager.get_delivery_jobs(origin, sub.mid)
-            pending += sum(job.status not in {"completed", "exhausted"} for job in jobs)
+            pending += sum(job.status in {"pending", "retry"} for job in jobs)
             exhausted += sum(job.status == "exhausted" for job in jobs)
         except (BiliVideoError, OSError) as exc:
             services.logger.warning(f"manual subscription check failed: {type(exc).__name__}")

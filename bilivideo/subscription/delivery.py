@@ -16,6 +16,7 @@ class DeliveryJob:
     targets: list[str] = field(default_factory=list)
     delivered: list[str] = field(default_factory=list)
     notified: list[str] = field(default_factory=list)
+    withdrawn: list[str] = field(default_factory=list)
     summary_status: str = "pending"
     markdown: str = ""
     video_info: dict[str, Any] = field(default_factory=dict)
@@ -34,7 +35,7 @@ class DeliveryJob:
         return asdict(self)
 
     def due(self, now: float, *, force: bool = False) -> bool:
-        if self.status == "completed":
+        if self.status in {"completed", "cancelled"}:
             return False
         return force or (self.attempts < MAX_ATTEMPTS and now >= self.next_retry_at)
 
@@ -42,7 +43,7 @@ class DeliveryJob:
         if force and self.attempts >= MAX_ATTEMPTS:
             self.attempts = 0
         self.attempts += 1
-        self.status = "retry"
+        self.status = "exhausted" if self.attempts >= MAX_ATTEMPTS else "retry"
         # Save a delay before external work. Cancellation/reload cannot produce
         # a tight retry loop, and attempts already consumed remain consumed.
         self.next_retry_at = now + RETRY_DELAYS[min(self.attempts - 1, len(RETRY_DELAYS) - 1)]
@@ -53,4 +54,5 @@ class DeliveryJob:
 
     @property
     def all_delivered(self) -> bool:
-        return bool(self.targets) and all(target in self.delivered for target in self.targets)
+        active = [target for target in self.targets if target not in self.withdrawn]
+        return bool(active) and all(target in self.delivered for target in active)

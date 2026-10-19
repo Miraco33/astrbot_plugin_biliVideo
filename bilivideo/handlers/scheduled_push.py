@@ -66,6 +66,8 @@ async def _push_if_new(
     job = next((item for item in jobs if item.due(now, force=force)), None)
     if job is None:
         return 0
+    if not await _refresh_targets(services, origin, sub, job):
+        return 0
     job.begin_attempt(now, force=force)
     await manager.save_delivery_job(origin, sub.mid, job)
 
@@ -87,6 +89,8 @@ async def _push_if_new(
             await _notify_failure(services, origin, sub, job)
             return 0
 
+    if not await _refresh_targets(services, origin, sub, job):
+        return 0
     try:
         chain = await _build_chain(services, sub, LatestVideo(**job.video), job)
     except Exception as exc:
@@ -101,7 +105,9 @@ async def _push_if_new(
         return 0
 
     for target in job.targets:
-        if target in job.delivered:
+        if not await _refresh_targets(services, origin, sub, job):
+            return 0
+        if target in job.delivered or target in job.withdrawn:
             continue
         try:
             result = await services.astrbot_context.send_message(
@@ -129,6 +135,25 @@ async def _push_if_new(
     return 0
 
 
+async def _refresh_targets(
+    services: BiliVideoServices, origin: str, sub: Subscription, job: DeliveryJob
+) -> bool:
+    manager = services.subscription_manager
+    if await manager.get_subscription(origin, sub.mid) is None:
+        return False
+    current = await manager.get_push_origins() or [origin]
+    for target in job.targets:
+        if target not in current and target not in job.withdrawn:
+            job.withdrawn.append(target)
+    if all(target in job.withdrawn for target in job.targets):
+        job.status = "cancelled"
+        job.error_kind = "TargetsRemoved"
+        await manager.save_delivery_job(origin, sub.mid, job)
+        return False
+    await manager.save_delivery_job(origin, sub.mid, job)
+    return True
+
+
 async def _notify_failure(
     services: BiliVideoServices, origin: str, sub: Subscription, job: DeliveryJob
 ) -> None:
@@ -137,7 +162,9 @@ async def _notify_failure(
         "任务已保留，将退避重试；也可发送 /检查更新 重试。"
     )
     for target in job.targets:
-        if target in job.notified or target in job.delivered:
+        if not await _refresh_targets(services, origin, sub, job):
+            return
+        if target in job.notified or target in job.delivered or target in job.withdrawn:
             continue
         try:
             result = await services.astrbot_context.send_message(

@@ -236,3 +236,95 @@ async def test_newer_discovery_does_not_discard_failed_job(services, monkeypatch
     assert jobs[1].status == "pending"
     # The old retry cannot move the completion cursor past the newer job.
     assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == "BV1mockold"
+
+
+@pytest.mark.asyncio
+async def test_last_attempt_cancellation_is_exhausted_after_reload(services, tmp_path):
+    sub = await seed(services)
+    services.orchestrator.generate.side_effect = DownloadError("synthetic")
+    await push.push_callback(services, ORIGIN, sub)
+    job = await job_of(services)
+    job.attempts = MAX_ATTEMPTS - 1
+    await services.subscription_manager.save_delivery_job(ORIGIN, MID, job)
+    started = asyncio.Event()
+
+    async def block(url):
+        started.set()
+        await asyncio.Future()
+
+    services.orchestrator.generate.side_effect = block
+    task = asyncio.create_task(push.push_callback(services, ORIGIN, sub, force=True))
+    await started.wait()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    services.subscription_manager.close()
+    services.subscription_manager = SubscriptionManager(str(tmp_path))
+    assert (await job_of(services)).status == "exhausted"
+    services.orchestrator.generate.reset_mock(side_effect=True)
+    await push.push_callback(services, ORIGIN, sub)
+    services.orchestrator.generate.assert_not_awaited()
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
+
+
+@pytest.mark.asyncio
+async def test_removed_target_is_withdrawn_from_partial_delivery(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    await manager.add_push_target("mock-target-a")
+    await manager.add_push_target("mock-target-b")
+    services.astrbot_context.send_message.side_effect = [True, False, True]
+    await push.push_callback(services, ORIGIN, sub)
+    await manager.remove_push_target("mock-target-b")
+    services.astrbot_context.send_message.reset_mock(side_effect=True)
+    services.astrbot_context.send_message.return_value = True
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert (await job_of(services)).withdrawn == ["mock-target-b"]
+
+
+@pytest.mark.asyncio
+async def test_removing_all_targets_cancels_without_redirecting_to_origin(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    await manager.add_push_target("mock-target")
+    services.orchestrator.generate.side_effect = DownloadError("synthetic")
+    await push.push_callback(services, ORIGIN, sub)
+    await manager.remove_push_target("mock-target")
+    services.astrbot_context.send_message.reset_mock()
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    job = await job_of(services)
+    assert job.status == "cancelled"
+    assert job.withdrawn == ["mock-target"]
+    assert (await manager.get_subscription(ORIGIN, MID)).last_bvid == "BV1mockold"
+
+
+@pytest.mark.asyncio
+async def test_unsubscribe_during_generation_prevents_delivery(services):
+    sub = await seed(services)
+
+    async def generate_then_unsubscribe(url):
+        await services.subscription_manager.remove_subscription(ORIGIN, MID)
+        return SimpleNamespace(markdown="summary", video_info=INFO)
+
+    services.orchestrator.generate.side_effect = generate_then_unsubscribe
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert await services.subscription_manager.get_delivery_jobs(ORIGIN, MID) == []
+
+
+@pytest.mark.asyncio
+async def test_target_removed_during_generation_receives_no_summary_or_notice(services):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    await manager.add_push_target("mock-target")
+
+    async def generate_then_remove(url):
+        await manager.remove_push_target("mock-target")
+        return SimpleNamespace(markdown="summary", video_info=INFO)
+
+    services.orchestrator.generate.side_effect = generate_then_remove
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    services.astrbot_context.send_message.assert_not_awaited()
+    assert (await job_of(services)).status == "cancelled"
