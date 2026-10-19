@@ -37,7 +37,25 @@
 - [上游问题 #29](https://github.com/storyAura/astrbot_plugin_biliVideo/issues/29)
 - [结果未回主对话的独立问题 #31](https://github.com/storyAura/astrbot_plugin_biliVideo/issues/31)
 
+## fork 初始化与生产切源状态
+
+2026-10-19 已建立自用 fork，维护版本 v2.1.1 已进入默认分支。
+代码基线：[4d492df](https://github.com/Miraco33/astrbot_plugin_biliVideo/commit/4d492df60dd35a911ec30365cc5664ee6adeae45)。
+[远端验证](https://github.com/Miraco33/astrbot_plugin_biliVideo/actions/runs/39207755179)：
+Python 3.10、3.11、3.12 的 pytest，Ruff 和 publication-check 均成功。
+requirements 与上游基线逐字相同；本轮没有部署业务可靠性修复。
+
+只读查看实际 Dashboard 来源绑定窗口：当前插件仍为 v2.1.0，
+选中“直接使用仓库地址”，安装目的地仍是上游仓库，不是本 fork。
+尚未执行生产覆盖安装或更换来源。
+
+切源需使用正式同名覆盖安装。该路径在依赖缺失、版本不满足或预检失败时可能调用安装器。
+当前无法只读运行容器依赖预检，而部署环境要求依赖安装/升级单独授权，因此生产切源待该授权后执行。
+待切源后复核来源持久化记录、插件身份、配置/订阅保留、加载日志与实际收发，再更新本节。
+
 ## 后续修复与验收
+
+- [ ] 完成生产安装来源切换与依赖/配置/收发验证。
 
 - [ ] 下载有限重试、续传、取消及必要时重新获取媒体地址。
 - [ ] 必剪阶段化脱敏错误、有限恢复；HTTP 412 单独分类，不无限重试。
