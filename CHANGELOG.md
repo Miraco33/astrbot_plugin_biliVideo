@@ -4,6 +4,12 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.3.0 (2026-11-25) — 视频通知、独立总结与动态订阅
+
+- 先发送新视频标题和链接，再按设置生成并单独发送总结。两个阶段分别维护每个目标的回执和重试状态。
+- UP 主订阅同时监控公开动态。动态具有独立的游标、投递回执和定时检查，已有订阅首次检查时仅建立基线。
+- `/总结状态` 向 B 站在线核验登录。明确失效后可直接重新扫码，超时或受限时保留本地凭据。
+
 ## v2.2.0 (2026-10-19) — 可靠性与主对话结果修复
 
 - 显示名改为 biliVideo（自用维护）；保留插件 name、author、原配置和数据命名空间。

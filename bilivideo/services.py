@@ -137,6 +137,7 @@ class BiliVideoServices:
         # Subscription / scheduler (callback wired later by Star)
         self.subscription_manager = SubscriptionManager(data_dir)
         self.scheduler: CheckScheduler | None = None
+        self.dynamic_scheduler: CheckScheduler | None = None
 
         # Anti-spam
         self.cooldown = CooldownTracker(window_seconds=config.user_cooldown_seconds)
@@ -144,6 +145,7 @@ class BiliVideoServices:
         # Serializes check-and-push per (origin, mid) so manual /检查更新 and
         # the scheduled loop can't push the same video twice.
         self.push_locks = KeyedLocks()
+        self.dynamic_push_locks = KeyedLocks()
 
         # Run-time mutable flags
         runtime_detect = self.runtime_state.get_bool("enable_miniapp_detect")
@@ -222,8 +224,9 @@ class BiliVideoServices:
         search_tasks = cancel_search_tasks(self)
         if search_tasks:
             await asyncio.gather(*search_tasks, return_exceptions=True)
-        if self.scheduler is not None:
-            await self.scheduler.stop()
+        schedulers = [scheduler for scheduler in (self.scheduler, self.dynamic_scheduler) if scheduler]
+        if schedulers:
+            await asyncio.gather(*(scheduler.stop() for scheduler in schedulers))
         if self._download_task and not self._download_task.done():
             self._download_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):

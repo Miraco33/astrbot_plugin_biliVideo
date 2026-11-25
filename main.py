@@ -19,6 +19,7 @@ from astrbot.api.star import Context, Star, StarTools
 from .bilivideo import handlers
 from .bilivideo.core.config import PluginConfig
 from .bilivideo.core.logging import get_logger
+from .bilivideo.handlers.dynamic_push import dynamic_push_callback
 from .bilivideo.handlers.scheduled_push import push_callback
 from .bilivideo.services import BiliVideoServices
 from .bilivideo.subscription.scheduler import CheckScheduler
@@ -54,8 +55,16 @@ class BiliVideoPlugin(Star):
             lambda origin, sub: push_callback(self._services, origin, sub),
             interval_seconds=plugin_config.check_interval_minutes * 60,
         )
+        self._services.dynamic_scheduler = CheckScheduler(
+            self._services.subscription_manager,
+            lambda origin, sub: dynamic_push_callback(self._services, origin, sub),
+            interval_seconds=plugin_config.check_interval_minutes * 60,
+            source="dynamic",
+            startup_delay=11.0,
+        )
         if plugin_config.enable_auto_push:
             self._services.scheduler.start()
+            self._services.dynamic_scheduler.start()
             self._tag.info("scheduler started")
         else:
             self._tag.info("scheduler disabled")

@@ -11,8 +11,17 @@ from ..api.wbi import clear_wbi_cache
 from ..core.logging import get_logger
 from ..llm.provider import DisabledLLMProvider
 from ..services import BilibiliSessionStatus, BiliVideoServices
+from ..subscription.scheduler import CheckScheduler
 
 logger = get_logger("BiliVideo/Status")
+
+
+def _scheduler_state(enabled: bool, scheduler: CheckScheduler | None) -> str:
+    if not enabled:
+        return "关闭"
+    if scheduler is not None and scheduler.is_running():
+        return "运行中"
+    return "⚠️ 已启用但未运行"
 
 
 async def handle_status(services: BiliVideoServices, event: object) -> AsyncIterator[object]:
@@ -24,20 +33,19 @@ async def handle_status(services: BiliVideoServices, event: object) -> AsyncIter
         BilibiliSessionStatus.EXPIRED: "❌ 登录已失效，可发送 /B站登录 重新扫码",
         BilibiliSessionStatus.UNVERIFIED: "⚠️ 已保存登录信息，B站请求受限或异常，暂无法核验",
     }[session_status]
-    if not cfg.enable_auto_push:
-        scheduler_state = "关闭(配置)"
-    elif services.scheduler is not None and services.scheduler.is_running():
-        scheduler_state = "✅ 运行中"
-    else:
-        scheduler_state = "⚠️ 已启用但未运行"
+    video_scheduler = _scheduler_state(cfg.enable_auto_push, services.scheduler)
+    dynamic_scheduler = _scheduler_state(cfg.enable_auto_push, services.dynamic_scheduler)
     targets = await services.subscription_manager.get_push_targets()
-    pending_jobs = exhausted_jobs = subscription_count = 0
+    pending_videos = exhausted_videos = pending_dynamics = exhausted_dynamics = subscription_count = 0
     for origin, subscriptions in (await services.subscription_manager.all_subscriptions()).items():
         subscription_count += len(subscriptions)
         for subscription in subscriptions:
             for job in await services.subscription_manager.get_delivery_jobs(origin, subscription.mid):
-                pending_jobs += job.status in {"pending", "retry"}
-                exhausted_jobs += job.status == "exhausted"
+                pending_videos += job.status in {"pending", "retry"}
+                exhausted_videos += job.status == "exhausted"
+            for job in await services.subscription_manager.get_dynamic_jobs(origin, subscription.mid):
+                pending_dynamics += job.status in {"pending", "retry"}
+                exhausted_dynamics += job.status == "exhausted"
     backends = ", ".join(services.renderer.available_backends) or "无 (将回退纯文本)"
     diagnostics = getattr(services.renderer, "backend_diagnostics", {})
     render_diag_lines = "\n".join(
@@ -79,9 +87,11 @@ async def handle_status(services: BiliVideoServices, event: object) -> AsyncIter
         f"🛠 系统工具: ffmpeg {ffmpeg}  wkhtmltoimage {wkhtml}\n"
         f"🔁 自动识别: {'开' if services.enable_miniapp_detect else '关'}\n"
         f"🌐 多平台: {multi_state}\n"
-        f"📡 定时检查: {scheduler_state} (间隔 {cfg.check_interval_minutes} 分钟)\n"
+        f"📡 定时检查: 视频 {video_scheduler} / 动态 {dynamic_scheduler}"
+        f" (间隔 {cfg.check_interval_minutes} 分钟)\n"
         f"📋 订阅: {subscription_count} 个 / 推送目标: {len(targets)} 个\n"
-        f"📬 投递任务: 待处理 {pending_jobs} / 自动重试耗尽 {exhausted_jobs}\n"
+        f"📬 视频投递: 待处理 {pending_videos} / 自动重试耗尽 {exhausted_videos}\n"
+        f"📬 动态投递: 待处理 {pending_dynamics} / 自动重试耗尽 {exhausted_dynamics}\n"
         f"🎧 下载 / 转写预算: {cfg.download_timeout_seconds} / {cfg.asr_timeout_seconds} 秒\n"
         f"🛟 备用语音转写: {'已配置' if cfg.fallback_asr_provider_id else '关闭'}\n"
         f"🗄  视频信息缓存: {video_info_cache_size()} 条\n"

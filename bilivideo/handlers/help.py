@@ -26,7 +26,7 @@ HELP_TEMPLATE = """\
   /订阅 (sub) <UP主UID或昵称>
   /取消订阅 (unsub) <UP主UID或昵称>
   /订阅列表 (sublist/subs)
-  /检查更新 (check) → 检查新视频并重试失败投递
+  /检查更新 (check) → 检查新视频和动态，并重试未完成的投递
 
 📌 推送目标(增删仅限 bot 管理员):
   /添加推送群 (addpg) <群号>

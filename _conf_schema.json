@@ -295,13 +295,13 @@
         "type": "bool",
         "default": false,
         "description": "启用定时推送",
-        "hint": "开启后周期性检查订阅 UP 主新视频"
+        "hint": "开启后周期性检查订阅 UP 主的投稿视频和公开动态"
       },
       "auto_push_summary": {
         "type": "bool",
         "default": true,
-        "description": "推送时附带 AI 总结",
-        "hint": "关闭后仅推送视频基本信息(节省 LLM 额度)"
+        "description": "视频通知后自动生成 AI 总结",
+        "hint": "开启后先发送视频通知，发送成功后再单独生成并推送总结。"
       },
       "check_interval_minutes": {
         "type": "int",

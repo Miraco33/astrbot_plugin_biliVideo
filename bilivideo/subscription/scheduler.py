@@ -30,12 +30,14 @@ class CheckScheduler:
         callback: CheckCallback,
         *,
         interval_seconds: int,
+        source: str = "video",
         startup_delay: float = 10.0,
         per_request_pause: float = 2.0,
     ) -> None:
         self._manager = manager
         self._callback = callback
         self._interval = interval_seconds
+        self._source = source
         self._startup_delay = startup_delay
         self._per_request_pause = per_request_pause
         self._task: asyncio.Task[None] | None = None
@@ -59,7 +61,7 @@ class CheckScheduler:
         self._task = None
 
     async def trigger_once(self) -> int:
-        """Run a single check pass synchronously, returning pushed video count.
+        """Run a single check pass synchronously, returning confirmed delivery count.
 
         Callback return values are intentionally permissive for old call sites:
         `True` counts as 1, integers are summed, and `None`/`False` count as 0.
@@ -82,7 +84,7 @@ class CheckScheduler:
             except asyncio.CancelledError:
                 return
             except Exception as exc:
-                logger.error(f"scheduler iteration failed: {exc}", exc_info=True)
+                logger.error(f"{self._source} scheduler iteration failed: {type(exc).__name__}")
             jitter = random.uniform(0, max(1.0, self._interval * 0.05))
             try:
                 await asyncio.sleep(self._interval + jitter)
@@ -95,7 +97,9 @@ class CheckScheduler:
             return 0
 
         total = sum(len(v) for v in all_subs.values())
-        logger.info(f"running scheduled check across {len(all_subs)} sessions ({total} subs)")
+        logger.info(
+            f"running scheduled {self._source} check across {len(all_subs)} sessions ({total} subs)"
+        )
 
         triggered = 0
         for origin, ups in all_subs.items():
@@ -109,7 +113,7 @@ class CheckScheduler:
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.warning(f"check {up.name} failed: {exc}")
+                    logger.warning(f"{self._source} subscription check failed: {type(exc).__name__}")
                 # tiny pause to avoid hammering Bilibili
                 await asyncio.sleep(self._per_request_pause)
         return triggered

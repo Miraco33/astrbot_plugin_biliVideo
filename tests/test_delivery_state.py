@@ -14,6 +14,7 @@ from bilivideo.core.exceptions import DownloadError, NetworkError
 from bilivideo.core.types import LatestVideo, VideoInfo
 from bilivideo.handlers import scheduled_push as push
 from bilivideo.handlers import subscription as commands
+from bilivideo.handlers.dynamic_push import DynamicCheckResult
 from bilivideo.subscription.delivery import MAX_ATTEMPTS
 from bilivideo.subscription.manager import SubscriptionManager
 
@@ -54,6 +55,46 @@ async def job_of(services):
     return (await services.subscription_manager.get_delivery_jobs(ORIGIN, MID))[0]
 
 
+def sent_messages(services):
+    return [
+        (call.args[0], "\n".join(call.args[1]["chain"]))
+        for call in services.astrbot_context.send_message.await_args_list
+    ]
+
+
+@pytest.mark.asyncio
+async def test_all_basic_notifications_are_confirmed_and_saved_before_summary(services):
+    sub = await seed(services)
+    targets = ["mock-target-a", "mock-target-b"]
+    for target in targets:
+        await services.subscription_manager.add_push_target(target)
+
+    async def check_receipts(_url):
+        job = await job_of(services)
+        assert job.delivered == targets
+        assert job.summary_delivered == []
+        assert [target for target, _ in sent_messages(services)] == targets
+        assert all("发布了新视频" in text and VIDEO.bvid in text for _, text in sent_messages(services))
+        return SimpleNamespace(markdown="summary", video_info=INFO)
+
+    services.orchestrator.generate.side_effect = check_receipts
+    assert await push.push_callback(services, ORIGIN, sub) == 1
+    assert (await job_of(services)).summary_delivered == targets
+    assert all("的 AI 视频总结" in text for _, text in sent_messages(services)[2:])
+
+
+@pytest.mark.asyncio
+async def test_basic_only_when_auto_summary_is_disabled(services):
+    sub = await seed(services)
+    services.config.auto_push_summary = False
+
+    assert await push.push_callback(services, ORIGIN, sub) == 1
+    assert (await job_of(services)).delivered == [ORIGIN]
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
+    services.orchestrator.generate.assert_not_awaited()
+
+
 @pytest.mark.asyncio
 async def test_failure_notice_does_not_complete_then_retry_succeeds(services, monkeypatch):
     sub = await seed(services)
@@ -64,27 +105,37 @@ async def test_failure_notice_does_not_complete_then_retry_succeeds(services, mo
     assert await push.push_callback(services, ORIGIN, sub) == 0
     failed = await job_of(services)
     assert failed.summary_status == "failed"
-    assert failed.notified == [ORIGIN]
+    assert failed.delivered == [ORIGIN]
+    assert failed.summary_delivered == []
+    assert failed.summary_notified == [ORIGIN]
+    assert "视频总结生成失败" in sent_messages(services)[1][1]
     assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == "BV1mockold"
     assert await push.push_callback(services, ORIGIN, sub) == 0
     assert services.orchestrator.generate.await_count == 1  # automatic backoff
-    monkeypatch.setattr(push.time, "time", lambda: failed.next_retry_at + 1)
+    monkeypatch.setattr(push.time, "time", lambda: failed.summary_next_retry_at + 1)
     assert await push.push_callback(services, ORIGIN, sub) == 1
     assert (await job_of(services)).status == "completed"
     assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == VIDEO.bvid
+    assert len(sent_messages(services)) == 3
+    assert "的 AI 视频总结" in sent_messages(services)[2][1]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("send_result", [False, None])
+@pytest.mark.parametrize("send_result", [False, None, RuntimeError("synthetic send failure")])
 async def test_no_throw_is_not_positive_receipt(services, send_result):
     sub = await seed(services)
-    services.astrbot_context.send_message.return_value = send_result
+    send = services.astrbot_context.send_message
+    if isinstance(send_result, Exception):
+        send.side_effect = send_result
+    else:
+        send.return_value = send_result
     assert await push.push_callback(services, ORIGIN, sub) == 0
     job = await job_of(services)
     assert job.delivered == []
     assert job.notified == []
-    assert job.summary_status == "ready"
-    assert job.error_kind == "SendNotConfirmed"
+    assert job.summary_status == "pending"
+    assert job.error_kind == (type(send_result).__name__ if send.side_effect else "SendNotConfirmed")
+    services.orchestrator.generate.assert_not_awaited()
     assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == "BV1mockold"
 
 
@@ -94,19 +145,51 @@ async def test_partial_delivery_survives_reload_without_regeneration(services, t
     manager = services.subscription_manager
     await manager.add_push_target("mock-target-a")
     await manager.add_push_target("mock-target-b")
-    services.astrbot_context.send_message.side_effect = [True, False, True]
+    services.astrbot_context.send_message.side_effect = [True, False, True, True]
     assert await push.push_callback(services, ORIGIN, sub) == 0
-    assert (await job_of(services)).delivered == ["mock-target-a"]
+    partial = await job_of(services)
+    assert partial.delivered == ["mock-target-a"]
+    assert partial.summary_delivered == ["mock-target-a"]
+    assert "新视频通知投递未确认" in sent_messages(services)[2][1]
     manager.close()
     services.subscription_manager = SubscriptionManager(str(tmp_path))
     services.astrbot_context.send_message.reset_mock(side_effect=True)
     services.astrbot_context.send_message.return_value = True
     assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
     assert services.orchestrator.generate.await_count == 1
-    calls = services.astrbot_context.send_message.await_args_list
-    assert len(calls) == 1
-    assert calls[0].args[0] == "mock-target-b"
+    calls = sent_messages(services)
+    assert [target for target, _ in calls] == ["mock-target-b", "mock-target-b"]
+    assert "发布了新视频" in calls[0][1]
+    assert "的 AI 视频总结" in calls[1][1]
     assert (await job_of(services)).notified == ["mock-target-b"]
+
+
+@pytest.mark.asyncio
+async def test_partial_summary_send_retries_only_unconfirmed_target_after_reload(services, tmp_path):
+    sub = await seed(services)
+    manager = services.subscription_manager
+    targets = ["mock-target-a", "mock-target-b"]
+    for target in targets:
+        await manager.add_push_target(target)
+    send = services.astrbot_context.send_message
+    send.side_effect = [True, True, True, False, True]
+
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    partial = await job_of(services)
+    assert partial.delivered == targets
+    assert partial.summary_delivered == ["mock-target-a"]
+    assert partial.summary_notified == ["mock-target-b"]
+    assert partial.summary_error_kind == "SendNotConfirmed"
+    assert "视频总结投递未确认" in sent_messages(services)[4][1]
+
+    manager.close()
+    services.subscription_manager = SubscriptionManager(str(tmp_path))
+    send.reset_mock(side_effect=True)
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
+    assert (await job_of(services)).summary_delivered == targets
+    assert services.orchestrator.generate.await_count == 1
+    assert [target for target, _ in sent_messages(services)] == ["mock-target-b"]
+    assert "的 AI 视频总结" in sent_messages(services)[0][1]
 
 
 @pytest.mark.asyncio
@@ -126,18 +209,18 @@ async def test_budget_survives_reload_and_notice_is_sent_once(services, tmp_path
     await push.push_callback(services, ORIGIN, sub)
     for _ in range(MAX_ATTEMPTS - 1):
         job = await job_of(services)
-        job.next_retry_at = 0
+        job.summary_next_retry_at = 0
         await services.subscription_manager.save_delivery_job(ORIGIN, MID, job)
         await push.push_callback(services, ORIGIN, sub)
     assert (await job_of(services)).status == "exhausted"
-    assert services.astrbot_context.send_message.await_count == 1
+    assert services.astrbot_context.send_message.await_count == 2
     services.subscription_manager.close()
     services.subscription_manager = SubscriptionManager(str(tmp_path))
     await push.push_callback(services, ORIGIN, sub)
     assert services.orchestrator.generate.await_count == MAX_ATTEMPTS
     services.orchestrator.generate.side_effect = None
     assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
-    assert (await job_of(services)).attempts == 1
+    assert (await job_of(services)).summary_attempts == 1
 
 
 @pytest.mark.asyncio
@@ -149,7 +232,7 @@ async def test_concurrent_manual_and_scheduled_share_state(services):
     )
     assert sum(results) == 1
     assert services.orchestrator.generate.await_count == 1
-    assert services.astrbot_context.send_message.await_count == 1
+    assert services.astrbot_context.send_message.await_count == 2
 
 
 @pytest.mark.asyncio
@@ -175,6 +258,60 @@ async def test_legacy_store_migrates_without_losing_fields(services, tmp_path):
     assert persisted["delivery_jobs"][ORIGIN][MID][VIDEO.bvid]["status"] == "completed"
 
 
+def load_legacy_job(services, tmp_path, job):
+    target = tmp_path / "subscriptions.json"
+    services.subscription_manager.close()
+    persisted = json.loads(target.read_text(encoding="utf-8"))
+    persisted["subscriptions"][ORIGIN]["up_list"][0]["last_seen_bvid"] = VIDEO.bvid
+    job.update(bvid=VIDEO.bvid, video={"bvid": VIDEO.bvid, "title": VIDEO.title}, targets=[ORIGIN])
+    persisted["delivery_jobs"] = {ORIGIN: {MID: {VIDEO.bvid: job}}}
+    target.write_text(json.dumps(persisted), encoding="utf-8")
+    services.subscription_manager = SubscriptionManager(str(tmp_path))
+
+
+@pytest.mark.asyncio
+async def test_completed_legacy_combined_message_covers_both_receipts(services, tmp_path):
+    sub = await seed(services)
+    load_legacy_job(
+        services, tmp_path, {"status": "completed", "delivered": [ORIGIN], "summary_status": "ready"}
+    )
+
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 0
+    job = await job_of(services)
+    assert job.delivered == job.summary_delivered == [ORIGIN]
+    services.astrbot_context.send_message.assert_not_awaited()
+    services.orchestrator.generate.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_exhausted_summary_allows_fresh_basic_delivery(services, tmp_path):
+    sub = await seed(services)
+    load_legacy_job(services, tmp_path, {
+        "status": "exhausted",
+        "attempts": MAX_ATTEMPTS,
+        "next_retry_at": 12345,
+        "summary_status": "failed",
+        "error_kind": "DownloadError",
+        "notified": [ORIGIN],
+    })
+
+    assert await push.push_callback(services, ORIGIN, sub) == 0
+    job = await job_of(services)
+    assert job.delivered == [ORIGIN]
+    assert job.summary_delivered == []
+    assert job.summary_attempts == MAX_ATTEMPTS
+    assert job.summary_next_retry_at == 12345
+    assert job.status == "exhausted"
+    assert job.attempts == 1
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
+    services.orchestrator.generate.assert_not_awaited()
+
+    assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
+    assert len(sent_messages(services)) == 2
+    assert "的 AI 视频总结" in sent_messages(services)[1][1]
+
+
 @pytest.mark.asyncio
 async def test_manual_command_uses_shared_retry_path(services, monkeypatch):
     sub = await seed(services)
@@ -182,6 +319,7 @@ async def test_manual_command_uses_shared_retry_path(services, monkeypatch):
     await push.push_callback(services, ORIGIN, sub)
     services.orchestrator.generate.side_effect = None
     monkeypatch.setattr(commands.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(commands, "check_dynamics", AsyncMock(return_value=DynamicCheckResult()))
     event = SimpleNamespace(unified_msg_origin=ORIGIN, plain_result=lambda value: value)
     replies = [
         reply async for reply in commands.handle_check_updates.__wrapped__(services, event)
@@ -214,7 +352,9 @@ async def test_cancellation_keeps_budget_and_recovers_after_reload(services, tmp
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
-    assert (await job_of(services)).attempts == 1
+    cancelled = await job_of(services)
+    assert cancelled.delivered == [ORIGIN]
+    assert cancelled.summary_attempts == 1
     services.subscription_manager.close()
     services.subscription_manager = SubscriptionManager(str(tmp_path))
     services.orchestrator.generate.side_effect = None
@@ -226,16 +366,28 @@ async def test_newer_discovery_does_not_discard_failed_job(services, monkeypatch
     sub = await seed(services)
     services.orchestrator.generate.side_effect = DownloadError("synthetic")
     await push.push_callback(services, ORIGIN, sub)
+    old_job = await job_of(services)
+    monkeypatch.setattr(push.time, "time", lambda: old_job.summary_next_retry_at + 1)
     newer = LatestVideo(bvid="BV1mocknewer", title="New synthetic")
     monkeypatch.setattr(push, "get_latest_videos", AsyncMock(return_value=[newer]))
-    services.orchestrator.generate.side_effect = None
-    assert await push.push_callback(services, ORIGIN, sub, force=True) == 1
+
+    async def check_newer_notice(url):
+        new_notice = sent_messages(services)[2][1]
+        assert newer.bvid in new_notice and "发布了新视频" in new_notice
+        info = VideoInfo(bvid=newer.bvid, title=newer.title) if url.endswith(newer.bvid) else INFO
+        return SimpleNamespace(markdown="summary", video_info=info)
+
+    services.orchestrator.generate.side_effect = check_newer_notice
+    assert await push.push_callback(services, ORIGIN, sub) == 2
+    generated = services.orchestrator.generate.await_args_list
+    assert generated[1].args[0].endswith(newer.bvid)
+    assert generated[2].args[0].endswith(VIDEO.bvid)
     jobs = await services.subscription_manager.get_delivery_jobs(ORIGIN, MID)
     assert [job.bvid for job in jobs] == [VIDEO.bvid, newer.bvid]
-    assert jobs[0].status == "completed"
-    assert jobs[1].status == "pending"
-    # The old retry cannot move the completion cursor past the newer job.
-    assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == "BV1mockold"
+    assert all(job.status == "completed" for job in jobs)
+    assert all(job.delivered == job.summary_delivered == [ORIGIN] for job in jobs)
+    # The older retry cannot move the completion cursor backwards.
+    assert (await services.subscription_manager.get_subscription(ORIGIN, MID)).last_bvid == newer.bvid
 
 
 @pytest.mark.asyncio
@@ -244,7 +396,7 @@ async def test_last_attempt_cancellation_is_exhausted_after_reload(services, tmp
     services.orchestrator.generate.side_effect = DownloadError("synthetic")
     await push.push_callback(services, ORIGIN, sub)
     job = await job_of(services)
-    job.attempts = MAX_ATTEMPTS - 1
+    job.summary_attempts = MAX_ATTEMPTS - 1
     await services.subscription_manager.save_delivery_job(ORIGIN, MID, job)
     started = asyncio.Event()
 
@@ -273,7 +425,7 @@ async def test_removed_target_is_withdrawn_from_partial_delivery(services):
     manager = services.subscription_manager
     await manager.add_push_target("mock-target-a")
     await manager.add_push_target("mock-target-b")
-    services.astrbot_context.send_message.side_effect = [True, False, True]
+    services.astrbot_context.send_message.side_effect = [True, False, True, True]
     await push.push_callback(services, ORIGIN, sub)
     await manager.remove_push_target("mock-target-b")
     services.astrbot_context.send_message.reset_mock(side_effect=True)
@@ -310,7 +462,8 @@ async def test_unsubscribe_during_generation_prevents_delivery(services):
 
     services.orchestrator.generate.side_effect = generate_then_unsubscribe
     assert await push.push_callback(services, ORIGIN, sub) == 0
-    services.astrbot_context.send_message.assert_not_awaited()
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
     assert await services.subscription_manager.get_delivery_jobs(ORIGIN, MID) == []
 
 
@@ -326,7 +479,8 @@ async def test_target_removed_during_generation_receives_no_summary_or_notice(se
 
     services.orchestrator.generate.side_effect = generate_then_remove
     assert await push.push_callback(services, ORIGIN, sub) == 0
-    services.astrbot_context.send_message.assert_not_awaited()
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
     assert (await job_of(services)).status == "cancelled"
 
 
@@ -357,7 +511,8 @@ async def test_old_snapshot_cannot_overwrite_target_revocation(services):
 
     services.orchestrator.generate.side_effect = generate_then_revoke
     assert await push.push_callback(services, ORIGIN, sub) == 0
-    services.astrbot_context.send_message.assert_not_awaited()
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
     assert (await job_of(services)).withdrawn == [ORIGIN]
     assert (await job_of(services)).status == "cancelled"
 
@@ -374,5 +529,6 @@ async def test_resubscribe_during_generation_does_not_revive_deleted_job(service
 
     services.orchestrator.generate.side_effect = generate_then_resubscribe
     assert await push.push_callback(services, ORIGIN, sub) == 0
-    services.astrbot_context.send_message.assert_not_awaited()
+    assert len(sent_messages(services)) == 1
+    assert "发布了新视频" in sent_messages(services)[0][1]
     assert await manager.get_delivery_jobs(ORIGIN, MID) == []

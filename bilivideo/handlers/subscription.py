@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from ..api.endpoints import (
     get_latest_videos,
@@ -14,10 +15,20 @@ from ..api.endpoints import (
 from ..core.exceptions import BiliVideoError
 from ..parsing.url_extractor import extract_uid
 from ..services import BiliVideoServices
+from ..subscription.manager import Subscription
 from ._utils import parse_command_args, require_access
+from .dynamic_push import DynamicCheckResult, check_dynamics
 from .scheduled_push import push_callback
 
 _SAVE_FAILED_MESSAGE = "❌ 订阅数据保存失败,请稍后重试"
+
+
+@dataclass(slots=True)
+class _ManualCheckCounts:
+    delivered: int = 0
+    pending: int = 0
+    exhausted: int = 0
+    failed: int = 0
 
 
 @require_access
@@ -76,8 +87,9 @@ async def handle_subscribe(services: BiliVideoServices, event: object) -> AsyncI
         yield event.plain_result(_SAVE_FAILED_MESSAGE)  # type: ignore[attr-defined]
         return
     if added:
+        mode = "已开启自动推送" if services.config.enable_auto_push else "发送 /检查更新 手动检查"
         yield event.plain_result(  # type: ignore[attr-defined]
-            f"✅ 已订阅 UP主【{name}】(UID:{mid})\n有新视频时将自动推送总结"
+            f"✅ 已订阅 UP主【{name}】(UID:{mid}) 的新视频和动态。{mode}。"
         )
     else:
         yield event.plain_result(f"⚠️ 已经订阅了 UP主【{name}】(UID:{mid})")  # type: ignore[attr-defined]
@@ -145,22 +157,52 @@ async def handle_check_updates(
         yield event.plain_result("📋 当前没有订阅任何UP主,无法检查更新")  # type: ignore[attr-defined]
         return
     yield event.plain_result(  # type: ignore[attr-defined]
-        f"🔍 正在检查 {len(subs)} 个UP主；未完成任务将重试，总结按推送目标发送。"
+        f"🔍 正在检查 {len(subs)} 个UP主的新视频和动态，并重试未完成的投递。"
     )
-    completed = 0
-    pending = 0
-    exhausted = 0
-    for sub in subs:
-        try:
-            completed += await push_callback(services, origin, sub, force=True)
-            jobs = await services.subscription_manager.get_delivery_jobs(origin, sub.mid)
-            pending += sum(job.status in {"pending", "retry"} for job in jobs)
-            exhausted += sum(job.status == "exhausted" for job in jobs)
-        except (BiliVideoError, OSError) as exc:
-            services.logger.warning(f"manual subscription check failed: {type(exc).__name__}")
-            pending += 1
-        await asyncio.sleep(2)
+    video, dynamic = await asyncio.gather(
+        _check_subscriptions(services, origin, subs, dynamic=False),
+        _check_subscriptions(services, origin, subs, dynamic=True),
+    )
+    delivered = video.delivered + dynamic.delivered
+    pending = video.pending + dynamic.pending
+    exhausted = video.exhausted + dynamic.exhausted
+    failed = video.failed + dynamic.failed
+    issues = f"另有 {failed} 项检查未完成。" if failed else ""
     yield event.plain_result(  # type: ignore[attr-defined]
-        f"✅ 检查完成：本次确认完成投递 {completed} 个；"
-        f"待重试 {pending} 个，自动重试耗尽 {exhausted} 个。"
+        f"✅ 检查结束。本次确认完成投递 {delivered} 个"
+        f"（视频 {video.delivered} 个，动态 {dynamic.delivered} 个）。"
+        f"待重试 {pending} 个，自动重试耗尽 {exhausted} 个。{issues}"
     )
+
+
+async def _check_subscriptions(
+    services: BiliVideoServices, origin: str, subs: list[Subscription], *, dynamic: bool,
+) -> _ManualCheckCounts:
+    counts = _ManualCheckCounts()
+    manager = services.subscription_manager
+    check = check_dynamics if dynamic else push_callback
+    get_jobs = manager.get_dynamic_jobs if dynamic else manager.get_delivery_jobs
+    source = "dynamic" if dynamic else "video"
+    for index, sub in enumerate(subs):
+        if index:
+            await asyncio.sleep(2)
+        try:
+            result = await check(services, origin, sub, force=True)
+        except Exception as exc:
+            services.logger.warning(f"manual {source} subscription check failed: {type(exc).__name__}")
+            counts.failed += 1
+        else:
+            if isinstance(result, DynamicCheckResult):
+                counts.delivered += result.delivered
+                counts.failed += result.discovery_failed
+            else:
+                counts.delivered += result
+        try:
+            jobs = await get_jobs(origin, sub.mid)
+        except OSError as exc:
+            services.logger.warning(f"manual {source} queue read failed: {type(exc).__name__}")
+            counts.failed += 1
+        else:
+            counts.pending += sum(job.status in {"pending", "retry"} for job in jobs)
+            counts.exhausted += sum(job.status == "exhausted" for job in jobs)
+    return counts

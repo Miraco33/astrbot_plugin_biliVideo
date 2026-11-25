@@ -1,26 +1,30 @@
 """High-level Bilibili API helpers.
 
 Each function takes a `BilibiliHTTPClient` (allowing dependency-injection
-in tests) and returns typed dataclasses from `core.types` instead of raw
-dicts. Errors propagate as exceptions from `core.exceptions`.
+in tests) and returns typed dataclasses instead of raw dicts. Errors
+propagate as exceptions from `core.exceptions`.
 """
 
 from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from dataclasses import dataclass
 
+from ..auth.cookies import REQUIRED_COOKIE_KEY
 from ..cache.lru_ttl import LRUTTLCache
 from ..core.constants import (
+    BV_REGEX,
     ENDPOINT_SEARCH_TYPE,
     ENDPOINT_SEARCH_TYPE_WBI,
+    ENDPOINT_USER_DYNAMICS,
     ENDPOINT_USER_INFO,
     ENDPOINT_USER_VIDEOS,
     ENDPOINT_VIEW,
     VIDEO_INFO_CACHE_MAX,
     VIDEO_INFO_CACHE_TTL_SECONDS,
 )
-from ..core.exceptions import BilibiliAPIError, BiliVideoError, NetworkError
+from ..core.exceptions import BilibiliAPIError, BiliVideoError, NetworkError, NotLoggedInError
 from ..core.logging import get_logger
 from ..core.types import (
     LatestVideo,
@@ -35,6 +39,19 @@ from .wbi import sign_params
 logger = get_logger("BiliVideo/API")
 
 _HIGHLIGHT_RE = re.compile(r'</?em[^>]*>')
+_BILIBILI_ID_RE = re.compile(r"[0-9]{1,20}")
+_DYNAMIC_PAGE_LIMIT = 20
+_NON_POST_DYNAMIC_TYPES = {"DYNAMIC_TYPE_NONE", "DYNAMIC_TYPE_AD", "DYNAMIC_TYPE_BANNER"}
+
+
+@dataclass(frozen=True, slots=True)
+class LatestDynamic:
+    dynamic_id: str
+    pubdate: int
+    text: str
+    url: str
+    kind: str
+    bvid: str = ""
 
 
 def _strip_highlight(text: str) -> str:
@@ -139,6 +156,110 @@ async def get_latest_videos(
         )
         for v in vlist[:count]
     ]
+
+
+def _as_mapping(value: object) -> Mapping[str, object]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _as_text(value: object) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _parse_space_dynamic(item: object) -> LatestDynamic | None:
+    if not isinstance(item, Mapping):
+        raise BiliVideoError("B 站动态接口返回了无效条目")
+
+    kind = _as_text(item.get("type"))
+    if kind in _NON_POST_DYNAMIC_TYPES:
+        return None
+    visible = item.get("visible")
+    if not isinstance(visible, bool):
+        raise BiliVideoError("B 站动态接口返回了无效的可见状态")
+    if not visible:
+        return None
+
+    modules = _as_mapping(item.get("modules"))
+    author = _as_mapping(modules.get("module_author"))
+    content = _as_mapping(modules.get("module_dynamic"))
+    major = _as_mapping(content.get("major"))
+    major_type = _as_text(major.get("type"))
+    archive = _as_mapping(major.get("archive"))
+    badges = (_as_mapping(author.get("icon_badge")), _as_mapping(archive.get("badge")))
+    badge_labels = {_as_text(badge.get("text")) for badge in badges}
+    additional = _as_mapping(content.get("additional"))
+    if (
+        badge_labels.intersection({"充电专属", "充电专享"})
+        or additional.get("type") == "ADDITIONAL_TYPE_UPOWER_LOTTERY"
+        or any(marker in kind or marker in major_type for marker in ("ONLYFANS", "PRIVATE", "UPOWER"))
+    ):
+        return None
+
+    dynamic_id = _as_text(item.get("id_str"))
+    pubdate = author.get("pub_ts")
+    if (
+        not _BILIBILI_ID_RE.fullmatch(dynamic_id)
+        or dynamic_id.startswith("0")
+        or type(pubdate) is not int
+        or pubdate <= 0
+        or not kind.startswith("DYNAMIC_TYPE_")
+        or not isinstance(modules.get("module_dynamic"), Mapping)
+    ):
+        raise BiliVideoError("B 站动态接口条目缺少有效的编号、时间、类型或正文模块")
+
+    desc = _as_text(_as_mapping(content.get("desc")).get("text"))
+    if kind == "DYNAMIC_TYPE_FORWARD":
+        # Let Bilibili enforce the original post's separate visibility limits.
+        text = desc or "转发动态"
+    else:
+        major_card = _as_mapping(major.get(major_type.removeprefix("MAJOR_TYPE_").lower()))
+        title = _as_text(major_card.get("title"))
+        summary = _as_text(_as_mapping(major_card.get("summary")).get("text"))
+        body = summary or desc or _as_text(major_card.get("desc"))
+        text = "\n".join(dict.fromkeys(part for part in (title, body) if part))
+    bvid = _as_text(archive.get("bvid"))
+    return LatestDynamic(
+        dynamic_id=dynamic_id,
+        pubdate=pubdate,
+        text=text,
+        url=f"https://t.bilibili.com/{dynamic_id}",
+        kind=kind,
+        bvid=bvid if kind == "DYNAMIC_TYPE_AV" and BV_REGEX.fullmatch(bvid) else "",
+    )
+
+
+async def get_latest_dynamics(
+    client: BilibiliHTTPClient, mid: str, *, count: int = _DYNAMIC_PAGE_LIMIT
+) -> list[LatestDynamic]:
+    """Read a single page of space dynamics, with newest published items first."""
+    if not _BILIBILI_ID_RE.fullmatch(mid) or not mid.lstrip("0"):
+        raise BiliVideoError("B 站动态接口需要有效的 UP 主 UID")
+    if count <= 0:
+        return []
+    if not client.cookies.get(REQUIRED_COOKIE_KEY):
+        raise NotLoggedInError()
+    payload = await client.request_json(
+        "GET",
+        ENDPOINT_USER_DYNAMICS,
+        params={"host_mid": mid, "offset": "", "platform": "web", "features": "itemOpusStyle"},
+        headers={"Referer": f"https://space.bilibili.com/{mid}/dynamic"},
+    )
+    response = _as_mapping(payload)
+    code = response.get("code")
+    if type(code) is not int or code != 0:
+        raise BiliVideoError("B 站动态接口返回了无效状态")
+    data = _as_mapping(response.get("data"))
+    items = data.get("items")
+    if not isinstance(items, list) or (not items and data.get("has_more") is True):
+        raise BiliVideoError("B 站动态接口返回了无效列表")
+
+    unique: dict[str, LatestDynamic] = {}
+    for item in items:
+        dynamic = _parse_space_dynamic(item)
+        if dynamic is not None:
+            unique.setdefault(dynamic.dynamic_id, dynamic)
+    ordered = sorted(unique.values(), key=lambda item: (item.pubdate, int(item.dynamic_id)), reverse=True)
+    return ordered[:min(count, _DYNAMIC_PAGE_LIMIT)]
 
 
 async def search_uploader_by_name(
