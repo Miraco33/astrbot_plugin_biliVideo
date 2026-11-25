@@ -10,7 +10,7 @@ from ..services import BiliVideoServices
 HELP_TEMPLATE = """\
 📝 biliVideo（自用维护）视频总结助手 v{version}
 ━━━━━━━━━━━━━━━━━━━
-🔐 B站登录状态: {login_status}
+🔐 B站登录信息: {login_status}
 
 📌 登录命令:
   /B站登录 (bvlogin) → 扫码登录B站
@@ -48,7 +48,7 @@ HELP_TEMPLATE = """\
 
 
 async def handle_help(services: BiliVideoServices, event: object) -> AsyncIterator[object]:
-    login_status = "✅ 已登录" if services.is_logged_in() else "❌ 未登录"
+    login_status = "已保存，发送 /总结状态 核验" if services.is_logged_in() else "未保存"
     platform_scope = "B站 / YouTube / 抖音 " if services.config.enable_multi_platform else "B站"
     yield event.plain_result(  # type: ignore[attr-defined]
         HELP_TEMPLATE.format(

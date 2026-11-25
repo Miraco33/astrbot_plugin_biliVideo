@@ -11,7 +11,7 @@ from bilivideo.auth.cookies import CookieJar
 def test_save_and_load(tmp_path) -> None:
     jar = CookieJar(tmp_path)
     assert not jar.is_logged_in()
-    jar.save({"SESSDATA": "abc", "bili_jct": "xyz"})
+    assert jar.save({"SESSDATA": "abc", "bili_jct": "xyz"})
     assert jar.is_logged_in()
     assert jar.get() == {"SESSDATA": "abc", "bili_jct": "xyz"}
 
@@ -29,7 +29,7 @@ def test_save_drops_empty_values(tmp_path) -> None:
 
 def test_save_without_sessdata_is_noop(tmp_path) -> None:
     jar = CookieJar(tmp_path)
-    jar.save({"bili_jct": "xyz"})
+    assert not jar.save({"bili_jct": "xyz"})
     assert not jar.is_logged_in()
     assert not (tmp_path / "bili_cookies.json").exists()
 
@@ -38,7 +38,7 @@ def test_clear(tmp_path) -> None:
     jar = CookieJar(tmp_path)
     jar.save({"SESSDATA": "abc"})
     assert (tmp_path / "bili_cookies.json").exists()
-    jar.clear()
+    assert jar.clear()
     assert not jar.is_logged_in()
     assert not (tmp_path / "bili_cookies.json").exists()
 
@@ -47,11 +47,11 @@ def test_clear_overwrites_before_unlink(tmp_path, monkeypatch) -> None:
     jar = CookieJar(tmp_path)
     jar.save({"SESSDATA": "abc"})
 
-    def _fail_unlink(self):
+    def _fail_unlink(self, *, missing_ok=False):
         raise OSError("locked")
 
     monkeypatch.setattr(Path, "unlink", _fail_unlink)
-    jar.clear()
+    assert jar.clear()
 
     jar2 = CookieJar(tmp_path)
     assert not jar2.is_logged_in()
@@ -70,3 +70,18 @@ def test_atomic_write_persists_valid_json(tmp_path) -> None:
     raw = (tmp_path / "bili_cookies.json").read_text(encoding="utf-8")
     payload = json.loads(raw)
     assert payload["SESSDATA"] == "x" * 100
+
+
+def test_failed_write_preserves_saved_credentials(tmp_path, monkeypatch) -> None:
+    jar = CookieJar(tmp_path)
+    assert jar.save({"SESSDATA": "old-test-value"})
+
+    def fail_write(_cookies):
+        raise OSError("mock write failure")
+
+    monkeypatch.setattr(jar, "_atomic_write", fail_write)
+    assert not jar.save({"SESSDATA": "new-test-value"})
+    assert jar.get() == {"SESSDATA": "old-test-value"}
+    assert CookieJar(tmp_path).get() == jar.get()
+    assert not jar.clear()
+    assert CookieJar(tmp_path).get() == jar.get()

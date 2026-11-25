@@ -37,19 +37,20 @@ class CookieJar:
     # ------------------------------------------------------------------
     # public API
     # ------------------------------------------------------------------
-    def save(self, cookies: Mapping[str, str]) -> None:
+    def save(self, cookies: Mapping[str, str]) -> bool:
         clean = {k: str(v) for k, v in cookies.items() if v}
         if not clean.get(REQUIRED_COOKIE_KEY):
             logger.warning("Skipping save: missing SESSDATA")
-            return
+            return False
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
             self._atomic_write(clean)
         except OSError as exc:
             logger.warning(f"Atomic cookie write failed: {exc}")
-            return
+            return False
         self._cookies = clean
         logger.info("Bilibili cookies saved")
+        return True
 
     def get(self) -> dict[str, str]:
         return dict(self._cookies)
@@ -57,14 +58,19 @@ class CookieJar:
     def is_logged_in(self) -> bool:
         return bool(self._cookies.get(REQUIRED_COOKIE_KEY))
 
-    def clear(self) -> None:
-        self._cookies = {}
+    def clear(self) -> bool:
         try:
             if self._path.exists():
                 self._atomic_write({})
-                self._path.unlink()
         except OSError as exc:
-            logger.warning(f"Cookie file removal failed: {exc}")
+            logger.warning(f"Cookie file reset failed: {exc}")
+            return False
+        try:
+            self._path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(f"Empty cookie file removal failed: {exc}")
+        self._cookies = {}
+        return True
 
     # ------------------------------------------------------------------
     # internals

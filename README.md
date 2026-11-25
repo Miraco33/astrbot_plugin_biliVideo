@@ -134,7 +134,7 @@ apt install -y fonts-noto-cjk    # 或 fonts-wqy-zenhei
 
 | 命令 | 说明 |
 | --- | --- |
-| `/总结状态` | 查看版本 / 登录 / LLM / 渲染后端 / 缓存等 |
+| `/总结状态` | 查看版本、在线核验 B 站登录、检查 LLM、渲染后端和缓存等 |
 | `/总结清缓存` | 清除视频信息 + WBI + 总结结果缓存 |
 | `/总结模型 [provider ID]` | 列出 / 切换 AstrBot 内置对话模型(仅 astrbot 模式) |
 
@@ -142,7 +142,7 @@ apt install -y fonts-noto-cjk    # 或 fonts-wqy-zenhei
 
 | 命令 | 说明 |
 | --- | --- |
-| `/B站登录` | 扫码登录 |
+| `/B站登录` | 首次登录或 B 站确认旧会话失效后重新扫码 |
 | `/B站登出` | 清除登录状态 |
 
 ### 订阅

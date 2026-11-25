@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+from enum import Enum
 from pathlib import Path
 
 from .access.cooldown import CooldownTracker
@@ -19,6 +20,8 @@ from .auth.cookies import CookieJar
 from .auth.qrlogin import QRLoginService
 from .auth.youtube_cookies import YouTubeCookieStore
 from .core.config import PluginConfig
+from .core.constants import ENDPOINT_NAV
+from .core.exceptions import BiliVideoError
 from .core.logging import get_logger
 from .core.runtime_state import RuntimeState
 from .downloader.ytdlp_downloader import YtDlpDownloader
@@ -31,6 +34,15 @@ from .summarize.orchestrator import SummaryOrchestrator
 from .transcription.astrbot_provider import AstrBotSTTFallback
 from .transcription.bcut_provider import BCutTranscriber
 from .transcription.pipeline import TranscriptPipeline
+
+BILIBILI_SESSION_CHECK_TIMEOUT = 5
+
+
+class BilibiliSessionStatus(Enum):
+    MISSING = "missing"
+    VALID = "valid"
+    EXPIRED = "expired"
+    UNVERIFIED = "unverified"
 
 
 class BiliVideoServices:
@@ -145,17 +157,52 @@ class BiliVideoServices:
     # ------------------------------------------------------------------
     # cookie/login helpers used by handlers
     # ------------------------------------------------------------------
-    def update_cookies(self, cookies: dict[str, str] | None) -> None:
+    def update_cookies(self, cookies: dict[str, str] | None) -> bool:
         if cookies is None:
-            self.cookies.clear()
-        else:
-            self.cookies.save(cookies)
+            if not self.cookies.clear():
+                return False
+        elif not self.cookies.save(cookies):
+            return False
         active = self.cookies.get()
         self.http_client.update_cookies(active)
         self.downloader.update_cookies(active)
+        return True
 
     def is_logged_in(self) -> bool:
+        """Return whether local credentials are present."""
         return self.cookies.is_logged_in()
+
+    async def check_bilibili_session(self) -> BilibiliSessionStatus:
+        if not self.is_logged_in():
+            return BilibiliSessionStatus.MISSING
+
+        checked_cookies = self.http_client.cookies
+        try:
+            payload = await asyncio.wait_for(
+                self.http_client.request_json("GET", ENDPOINT_NAV, expect_code_zero=False),
+                timeout=BILIBILI_SESSION_CHECK_TIMEOUT,
+            )
+        except (BiliVideoError, asyncio.TimeoutError, UnicodeDecodeError):
+            payload = None
+
+        # Login or logout may replace the credentials while nav is in flight.
+        if not self.is_logged_in():
+            return BilibiliSessionStatus.MISSING
+        if checked_cookies is not self.http_client.cookies or not isinstance(payload, dict):
+            return BilibiliSessionStatus.UNVERIFIED
+
+        code = payload.get("code")
+        if type(code) is not int:
+            return BilibiliSessionStatus.UNVERIFIED
+        data = payload.get("data")
+        if code == -101:
+            return BilibiliSessionStatus.EXPIRED
+        if code == 0 and isinstance(data, dict):
+            if data.get("isLogin") is True:
+                return BilibiliSessionStatus.VALID
+            if data.get("isLogin") is False:
+                return BilibiliSessionStatus.EXPIRED
+        return BilibiliSessionStatus.UNVERIFIED
 
     # ------------------------------------------------------------------
     # download task helpers

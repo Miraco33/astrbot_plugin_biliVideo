@@ -66,7 +66,7 @@ class BiliVideoPlugin(Star):
         except Exception as exc:  # pragma: no cover - depends on AstrBot version
             self._tag.warning(f"AI tool registration failed: {exc}")
 
-        login_state = "logged in" if self._services.is_logged_in() else "no SESSDATA"
+        login_state = "Bilibili credentials saved" if self._services.is_logged_in() else "no SESSDATA"
         logger.info(f"BiliVideo plugin ready ({login_state})")
 
     async def _seed_push_targets(self, config: PluginConfig) -> None:

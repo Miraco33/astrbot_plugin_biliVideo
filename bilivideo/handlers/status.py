@@ -10,14 +10,20 @@ from ..api.endpoints import clear_video_info_cache, video_info_cache_size
 from ..api.wbi import clear_wbi_cache
 from ..core.logging import get_logger
 from ..llm.provider import DisabledLLMProvider
-from ..services import BiliVideoServices
+from ..services import BilibiliSessionStatus, BiliVideoServices
 
 logger = get_logger("BiliVideo/Status")
 
 
 async def handle_status(services: BiliVideoServices, event: object) -> AsyncIterator[object]:
     cfg = services.config
-    cookie_state = "✅ 已登录" if services.is_logged_in() else "❌ 未登录"
+    session_status = await services.check_bilibili_session()
+    cookie_state = {
+        BilibiliSessionStatus.MISSING: "❌ 未保存登录信息",
+        BilibiliSessionStatus.VALID: "✅ 已登录（B站核验）",
+        BilibiliSessionStatus.EXPIRED: "❌ 登录已失效，可发送 /B站登录 重新扫码",
+        BilibiliSessionStatus.UNVERIFIED: "⚠️ 已保存登录信息，B站请求受限或异常，暂无法核验",
+    }[session_status]
     if not cfg.enable_auto_push:
         scheduler_state = "关闭(配置)"
     elif services.scheduler is not None and services.scheduler.is_running():
