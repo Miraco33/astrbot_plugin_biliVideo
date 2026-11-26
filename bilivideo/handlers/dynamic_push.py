@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 
 from ..api.endpoints import get_latest_dynamics
 from ..core.exceptions import BiliVideoError
@@ -19,6 +20,7 @@ except ImportError:  # pragma: no cover - offline test environment
 
 MAX_JOBS_PER_CHECK = 5
 MAX_TEXT_LENGTH = 500
+BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,4 +157,10 @@ def _dynamic_text(sub: Subscription, job: DynamicDeliveryJob) -> str:
     text = job.text.strip()
     if len(text) > MAX_TEXT_LENGTH:
         text = text[:MAX_TEXT_LENGTH - 1].rstrip() + "…"
-    return "\n".join(filter(None, [f"🔔 UP主【{name}】发布了新动态", text, job.url]))
+    published_at = datetime.fromtimestamp(job.pubdate, tz=BEIJING_TIMEZONE)
+    return "\n".join(filter(None, [
+        f"🔔 UP主【{name}】发布了新动态",
+        f"北京时间 {published_at:%Y-%m-%d %H:%M}",
+        text,
+        job.url,
+    ]))

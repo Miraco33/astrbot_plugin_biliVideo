@@ -4,6 +4,10 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.3.2 (2026-11-26) — 显示动态发布时间
+
+- 动态通知增加一行北京时间，显示日期和分钟。
+
 ## v2.3.1 (2026-11-26) — 修复动态发布时间解析
 
 - B 站空间动态的发布时间同时支持整数和数字字符串。保留订阅游标，恢复轮询后可按原位置补发仍在近期列表内的动态。

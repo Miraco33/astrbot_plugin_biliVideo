@@ -14,7 +14,8 @@ from bilivideo.api.endpoints import LatestDynamic
 from bilivideo.core.exceptions import NetworkError
 from bilivideo.handlers import dynamic_push as push
 from bilivideo.handlers import subscription as commands
-from bilivideo.subscription.manager import SubscriptionManager
+from bilivideo.subscription.dynamic_delivery import DynamicDeliveryJob
+from bilivideo.subscription.manager import Subscription, SubscriptionManager
 
 ORIGIN = "mock-origin"
 MID = "mock-uploader"
@@ -30,6 +31,18 @@ def dynamic(dynamic_id: int = 100) -> LatestDynamic:
         url=f"https://t.bilibili.com/{dynamic_id}",
         kind="DYNAMIC_TYPE_WORD",
     )
+
+
+def test_dynamic_notice_displays_published_time_in_beijing() -> None:
+    sub = Subscription(mid=MID, name="测试 UP 主")
+    job = DynamicDeliveryJob(
+        dynamic_id="100", text="动态正文", url="https://t.bilibili.com/100",
+        pubdate=1704038400, targets=[ORIGIN],
+    )
+
+    assert push._dynamic_text(sub, job).splitlines()[1:] == [
+        "北京时间 2024-01-01 00:00", "动态正文", job.url,
+    ]
 
 
 @pytest.fixture
@@ -66,8 +79,9 @@ async def test_partial_dynamic_delivery_resumes_without_resending_receipt(servic
     assert job.delivered == [TARGET_A]
     assert job.status == "retry"
     body = send.await_args_list[0].args[1]["chain"][0]
-    heading, text, url = body.splitlines()
+    heading, time_line, text, url = body.splitlines()
     assert heading == "🔔 UP主【测试 UP 主】发布了新动态"
+    assert time_line.startswith("北京时间 ")
     assert len(text) == push.MAX_TEXT_LENGTH and text.endswith("…")
     assert url == dynamic().url
     assert await push.dynamic_push_callback(services, ORIGIN, sub) == 0
