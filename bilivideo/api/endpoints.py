@@ -197,6 +197,8 @@ def _parse_space_dynamic(item: object) -> LatestDynamic | None:
 
     dynamic_id = _as_text(item.get("id_str"))
     pubdate = author.get("pub_ts")
+    if isinstance(pubdate, str) and re.fullmatch(r"[0-9]{1,10}", pubdate):
+        pubdate = int(pubdate)
     if (
         not _BILIBILI_ID_RE.fullmatch(dynamic_id)
         or dynamic_id.startswith("0")

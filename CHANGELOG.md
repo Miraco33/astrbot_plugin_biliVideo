@@ -4,6 +4,11 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.3.1 (2026-11-26) — 修复动态发布时间解析
+
+- B 站空间动态的发布时间同时支持整数和数字字符串。保留订阅游标，恢复轮询后可按原位置补发仍在近期列表内的动态。
+- 回归覆盖数字字符串、整数、置顶图文以及无效时间值。
+
 ## v2.3.0 (2026-11-25) — 视频通知、独立总结与动态订阅
 
 - 先发送新视频标题和链接，再按设置生成并单独发送总结。两个阶段分别维护每个目标的回执和重试状态。

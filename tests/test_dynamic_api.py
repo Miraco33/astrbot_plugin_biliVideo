@@ -15,7 +15,7 @@ from bilivideo.core.exceptions import BiliVideoError, NotLoggedInError, RiskCont
 
 def _item(
     dynamic_id: str,
-    pubdate: int,
+    pubdate: int | str,
     *,
     kind: str = "DYNAMIC_TYPE_WORD",
     text: str = "",
@@ -90,6 +90,26 @@ async def test_space_dynamics_parse_and_deduplicate_by_id() -> None:
     )
 
 
+async def test_space_dynamics_accept_numeric_strings_from_current_space_feed() -> None:
+    pinned = _item("101", "1700000000", kind="DYNAMIC_TYPE_DRAW")
+    pinned["modules"]["module_tag"] = {"text": "置顶"}
+    recent = _item(
+        "102",
+        "1700000002",
+        kind="DYNAMIC_TYPE_DRAW",
+        major={"type": "MAJOR_TYPE_OPUS", "opus": {"summary": {"text": "新图文"}}},
+    )
+    legacy = _item("103", 1700000001, text="旧格式")
+    payload = {"code": 0, "data": {"items": [pinned, recent, legacy], "has_more": True}}
+
+    result = await get_latest_dynamics(_client(payload), "123")
+
+    assert [(item.dynamic_id, item.pubdate) for item in result] == [
+        ("102", 1700000002), ("103", 1700000001), ("101", 1700000000),
+    ]
+    assert result[0].text == "新图文"
+
+
 async def test_space_dynamics_skip_restricted_and_unavailable_posts() -> None:
     hidden = {"visible": False}
     invalid = {"type": "DYNAMIC_TYPE_NONE"}
@@ -131,6 +151,8 @@ async def test_space_dynamics_empty_page_is_valid() -> None:
         {"code": 0, "data": {"items": [{"id_str": "10", "type": "DYNAMIC_TYPE_WORD"}]}},
         {"code": 0, "data": {"items": [_item("1/path", 100)]}},
         {"code": 0, "data": {"items": [_item("123", 0), _item("124", 100)]}},
+        {"code": 0, "data": {"items": [_item("123", "0")]}},
+        {"code": 0, "data": {"items": [_item("123", "1700000001.0")]}},
     ],
 )
 async def test_space_dynamics_reject_malformed_page(payload: object) -> None:

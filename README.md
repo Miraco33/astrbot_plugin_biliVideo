@@ -4,7 +4,7 @@
 正式代码、稳定规则和故障记录均在 GitHub 维护，不建立长期本地工作区，不向插件市场或包仓库分发。
 仓库公开可见；每次提交、更新与发布前均须脱敏。
 
-当前 fork 版本 **v2.3.0**。视频订阅先发送通知，随后按设置单独生成并发送总结。现有 UP 主订阅同时接收公开动态，状态命令支持在线核验 B 站登录。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
+当前 fork 版本 **v2.3.1**。视频订阅先发送通知，随后按设置单独生成并发送总结。现有 UP 主订阅同时接收公开动态，状态命令支持在线核验 B 站登录。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
 
 - [维护规则](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/AGENTS.md)
 - [控制台更新与回滚](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/docs/MAINTENANCE.md)
