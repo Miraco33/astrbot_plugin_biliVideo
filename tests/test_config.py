@@ -72,3 +72,18 @@ def test_flat_config_still_supported() -> None:
     cfg = PluginConfig.from_mapping({"debug_mode": True, "max_note_length": 800})
     assert cfg.debug_mode is True
     assert cfg.max_note_length == 800
+
+
+def test_existing_video_interval_keeps_independent_dynamic_default() -> None:
+    cfg = PluginConfig.from_mapping({"subscription": {"check_interval_minutes": 60}})
+    assert cfg.check_interval_minutes == 60
+    assert cfg.dynamic_check_interval_minutes == 5
+
+
+def test_dynamic_check_interval_is_configurable_and_clamped() -> None:
+    cfg = PluginConfig.from_mapping({"subscription": {"dynamic_check_interval_minutes": 3}})
+    assert cfg.dynamic_check_interval_minutes == 3
+    short = PluginConfig.from_mapping({"dynamic_check_interval_minutes": 1})
+    assert short.dynamic_check_interval_minutes == 2
+    long = PluginConfig.from_mapping({"dynamic_check_interval_minutes": 1441})
+    assert long.dynamic_check_interval_minutes == 1440

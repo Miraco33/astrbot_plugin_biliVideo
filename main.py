@@ -58,7 +58,7 @@ class BiliVideoPlugin(Star):
         self._services.dynamic_scheduler = CheckScheduler(
             self._services.subscription_manager,
             lambda origin, sub: dynamic_push_callback(self._services, origin, sub),
-            interval_seconds=plugin_config.check_interval_minutes * 60,
+            interval_seconds=plugin_config.dynamic_check_interval_minutes * 60,
             source="dynamic",
             startup_delay=11.0,
         )

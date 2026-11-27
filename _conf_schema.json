@@ -308,7 +308,14 @@
         "default": 600,
         "min": 5,
         "max": 1440,
-        "description": "检查间隔(分钟)"
+        "description": "视频检查间隔（分钟）"
+      },
+      "dynamic_check_interval_minutes": {
+        "type": "int",
+        "default": 5,
+        "min": 2,
+        "max": 1440,
+        "description": "动态检查间隔（分钟）"
       },
       "max_subscriptions": {
         "type": "int",

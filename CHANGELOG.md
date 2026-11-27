@@ -4,6 +4,11 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.3.3 (2026-11-27) — 缩短动态通知等待时间
+
+- 动态改用独立的检查间隔，默认 5 分钟。原视频间隔沿用现有配置。
+- 一轮有多条动态时按顺序间隔 15 秒发送。动态发现失败时逐步退避，已入队的消息可以继续投递。
+
 ## v2.3.2 (2026-11-26) — 显示动态发布时间
 
 - 动态通知增加一行北京时间，显示日期和分钟。

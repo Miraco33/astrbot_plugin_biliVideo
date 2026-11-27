@@ -4,7 +4,7 @@
 正式代码、稳定规则和故障记录均在 GitHub 维护，不建立长期本地工作区，不向插件市场或包仓库分发。
 仓库公开可见；每次提交、更新与发布前均须脱敏。
 
-当前 fork 版本 **v2.3.2**。视频订阅先发送通知，随后按设置单独生成并发送总结。现有 UP 主订阅同时接收公开动态，状态命令支持在线核验 B 站登录。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
+当前 fork 版本 **v2.3.3**。视频订阅先发送通知，随后按设置单独生成并发送总结。现有 UP 主订阅同时接收公开动态，状态命令支持在线核验 B 站登录。显示名为 **biliVideo（自用维护）**，内部名称及作者标识保持原值。
 
 - [维护规则](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/AGENTS.md)
 - [控制台更新与回滚](https://github.com/Miraco33/astrbot_plugin_biliVideo/blob/main/docs/MAINTENANCE.md)
@@ -174,7 +174,7 @@ apt install -y fonts-noto-cjk    # 或 fonts-wqy-zenhei
 
 视频通知发送成功后，启用自动总结的订阅才会生成总结，并另发一条消息。两步分别记录每个目标的发送结果，总结失败后可以补试，已确认的视频通知不会重复发送。
 
-动态使用独立的检查和投递队列，发送北京时间、正文摘要和原动态链接。已有订阅首次成功检查动态时建立基线，从其后开始推送。每轮使用插件当前的 B 站登录会话检查空间动态近期一页。请求失败时保留上次游标。带 BV 号的原创新视频走视频订阅，公开视频转发仍作为动态推送。
+动态使用独立的检查和投递队列，默认每 5 分钟检查，发送北京时间、正文摘要和原动态链接。一轮发现多条时依次发送，间隔 15 秒。动态接口失败后暂停发现请求，已入队的消息继续按原定时间重试。已有订阅首次成功检查动态时建立基线，从其后开始推送。每轮使用插件当前的 B 站登录会话检查空间动态近期一页。请求失败时保留上次游标。带 BV 号的原创新视频走视频订阅，公开视频转发仍作为动态推送。
 
 ---
 
@@ -243,7 +243,8 @@ AI 先调用 `bilibili_search_list` 搜索，再调用 `bilibili_search_download
 | `llm_provider_id` | `""` | 指定 AstrBot 内置模型 ID(留空=当前模型;用 `/总结模型` 查看可用 ID) |
 | `enable_auto_push` | `false` | 定时检查新视频和公开动态 |
 | `auto_push_summary` | `true` | 视频通知发送成功后单独生成并发送 AI 总结 |
-| `check_interval_minutes` | `600` | 定时检查间隔 |
+| `check_interval_minutes` | `600` | 视频检查间隔（分钟） |
+| `dynamic_check_interval_minutes` | `5` | 动态检查间隔（分钟） |
 | `max_subscriptions` | `20` | 每个会话最大订阅数 |
 | `enable_miniapp_detect` | `false` | 自动识别群内 B 站链接 |
 | `detect_auto_summary` | `false` | 识别后自动生成总结 |

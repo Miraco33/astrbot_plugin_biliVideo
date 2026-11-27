@@ -146,6 +146,9 @@ class BiliVideoServices:
         # the scheduled loop can't push the same video twice.
         self.push_locks = KeyedLocks()
         self.dynamic_push_locks = KeyedLocks()
+        self.dynamic_discovery_lock = asyncio.Lock()
+        # None represents a Bilibili risk-control response shared by all UPs.
+        self.dynamic_discovery_backoff: dict[str | None, tuple[int, float]] = {}
 
         # Run-time mutable flags
         runtime_detect = self.runtime_state.get_bool("enable_miniapp_detect")

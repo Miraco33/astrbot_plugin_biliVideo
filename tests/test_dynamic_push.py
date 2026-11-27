@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -11,7 +12,7 @@ import pytest
 
 from bilivideo.access.keyed_lock import KeyedLocks
 from bilivideo.api.endpoints import LatestDynamic
-from bilivideo.core.exceptions import NetworkError
+from bilivideo.core.exceptions import NetworkError, RiskControlError
 from bilivideo.handlers import dynamic_push as push
 from bilivideo.handlers import subscription as commands
 from bilivideo.subscription.dynamic_delivery import DynamicDeliveryJob
@@ -53,6 +54,8 @@ def services(tmp_path, monkeypatch):
     return SimpleNamespace(
         subscription_manager=SubscriptionManager(str(tmp_path)),
         dynamic_push_locks=KeyedLocks(),
+        dynamic_discovery_lock=asyncio.Lock(),
+        dynamic_discovery_backoff={},
         astrbot_context=SimpleNamespace(send_message=AsyncMock(return_value=True)),
         http_client=object(),
         logger=MagicMock(),
@@ -96,6 +99,53 @@ async def test_partial_dynamic_delivery_resumes_without_resending_receipt(servic
     assert send.await_count == 1 and send.await_args.args[0] == TARGET_B
     (job,) = await services.subscription_manager.get_dynamic_jobs(ORIGIN, MID)
     assert job.status == "completed" and job.delivered == [TARGET_A, TARGET_B]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_backlog_is_sent_in_order_with_spacing(services, monkeypatch):
+    sub = await subscribe(services)
+    first = dynamic(100)
+    later = replace(dynamic(101), pubdate=first.pubdate + 1)
+    push.get_latest_dynamics.return_value = [later, first]
+    calls = []
+
+    async def send(_target, message):
+        calls.append(message["chain"][0].splitlines()[-1])
+        return True
+
+    async def pause(seconds):
+        calls.append(seconds)
+
+    services.astrbot_context.send_message.side_effect = send
+    monkeypatch.setattr(push, "asyncio", SimpleNamespace(sleep=pause))
+    assert await push.dynamic_push_callback(services, ORIGIN, sub) == 2
+    assert calls == [first.url, push.DELIVERY_SPACING_SECONDS, later.url]
+
+
+@pytest.mark.asyncio
+async def test_dynamic_risk_control_pauses_discovery_and_keeps_queued_delivery(services, monkeypatch):
+    sub = await subscribe(services)
+    other_mid = "mock-second-uploader"
+    await services.subscription_manager.add_subscription(ORIGIN, other_mid, "第二个 UP 主")
+    other = await services.subscription_manager.get_subscription(ORIGIN, other_mid)
+    await services.subscription_manager.discover_dynamics(ORIGIN, other_mid, [dynamic()], [ORIGIN])
+
+    tick = [100.0]
+    monkeypatch.setattr(push, "time", SimpleNamespace(time=time.time, monotonic=lambda: tick[0]))
+    fetch = push.get_latest_dynamics
+    fetch.side_effect = [RiskControlError(), RiskControlError(), []]
+
+    assert (await push.check_dynamics(services, ORIGIN, sub)).discovery_failed
+    result = await push.check_dynamics(services, ORIGIN, other)
+    assert result == push.DynamicCheckResult(delivered=1, discovery_failed=True)
+    assert fetch.await_count == 1
+
+    tick[0] += push.DISCOVERY_RETRY_SECONDS
+    assert (await push.check_dynamics(services, ORIGIN, sub)).discovery_failed
+    assert services.dynamic_discovery_backoff[None][0] == 2 * push.DISCOVERY_RETRY_SECONDS
+    tick[0] += 2 * push.DISCOVERY_RETRY_SECONDS
+    assert not (await push.check_dynamics(services, ORIGIN, sub)).discovery_failed
+    assert services.dynamic_discovery_backoff == {}
 
 
 @pytest.mark.asyncio

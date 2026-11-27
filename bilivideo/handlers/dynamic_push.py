@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from ..api.endpoints import get_latest_dynamics
-from ..core.exceptions import BiliVideoError
+from ..core.exceptions import BiliVideoError, RiskControlError
 from ..services import BiliVideoServices
 from ..subscription.dynamic_delivery import DynamicDeliveryJob
 from ..subscription.manager import Subscription
@@ -20,6 +21,9 @@ except ImportError:  # pragma: no cover - offline test environment
 
 MAX_JOBS_PER_CHECK = 5
 MAX_TEXT_LENGTH = 500
+DELIVERY_SPACING_SECONDS = 15
+DISCOVERY_RETRY_SECONDS = 600
+MAX_DISCOVERY_RETRY_SECONDS = 3600
 BEIJING_TIMEZONE = timezone(timedelta(hours=8))
 
 
@@ -56,7 +60,9 @@ async def check_dynamics(
             or (job.status in {"pending", "retry", "exhausted"} and job.all_delivered)
         ]
         delivered = 0
-        for job in due[:MAX_JOBS_PER_CHECK]:
+        for index, job in enumerate(due[:MAX_JOBS_PER_CHECK]):
+            if index:
+                await asyncio.sleep(DELIVERY_SPACING_SECONDS)
             delivered += await _deliver_dynamic(services, origin, fresh, job, now, force=force)
         if delivered:
             services.logger.info(f"dynamic delivery confirmed: {delivered}")
@@ -64,11 +70,23 @@ async def check_dynamics(
 
 
 async def _discover_dynamics(services: BiliVideoServices, origin: str, mid: str) -> bool:
-    try:
-        dynamics = await get_latest_dynamics(services.http_client, mid)
-    except (BiliVideoError, UnicodeDecodeError) as exc:
-        services.logger.warning(f"dynamic discovery failed: {type(exc).__name__}")
-        return False
+    async with services.dynamic_discovery_lock:
+        backoff = services.dynamic_discovery_backoff
+        _, author_retry_at = backoff.get(mid, (0, 0))
+        _, shared_retry_at = backoff.get(None, (0, 0))
+        if time.monotonic() < max(author_retry_at, shared_retry_at):
+            return False
+        try:
+            dynamics = await get_latest_dynamics(services.http_client, mid)
+        except (BiliVideoError, UnicodeDecodeError) as exc:
+            key = None if isinstance(exc, RiskControlError) else mid
+            previous_delay, _ = backoff.get(key, (0, 0))
+            delay = min(MAX_DISCOVERY_RETRY_SECONDS, previous_delay * 2 or DISCOVERY_RETRY_SECONDS)
+            backoff[key] = (delay, time.monotonic() + delay)
+            services.logger.warning(f"dynamic discovery failed: {type(exc).__name__}; retry in {delay}s")
+            return False
+        backoff.pop(mid, None)
+        backoff.pop(None, None)
     manager = services.subscription_manager
     targets = await manager.get_push_origins() or [origin]
     await manager.discover_dynamics(origin, mid, dynamics, targets)

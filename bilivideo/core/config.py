@@ -166,6 +166,7 @@ class PluginConfig:
     enable_auto_push: bool = False
     auto_push_summary: bool = True
     check_interval_minutes: int = 600
+    dynamic_check_interval_minutes: int = 5
     max_subscriptions: int = 20
     push_groups: tuple[str, ...] = ()
     push_users: tuple[str, ...] = ()
@@ -267,6 +268,12 @@ class PluginConfig:
             auto_push_summary=_coerce_bool(flat.get("auto_push_summary"), d("auto_push_summary")),
             check_interval_minutes=_coerce_int(
                 flat.get("check_interval_minutes"), d("check_interval_minutes"), lo=5, hi=1440
+            ),
+            dynamic_check_interval_minutes=_coerce_int(
+                flat.get("dynamic_check_interval_minutes"),
+                d("dynamic_check_interval_minutes"),
+                lo=2,
+                hi=1440,
             ),
             max_subscriptions=_coerce_int(
                 flat.get("max_subscriptions"), d("max_subscriptions"), lo=1, hi=100
