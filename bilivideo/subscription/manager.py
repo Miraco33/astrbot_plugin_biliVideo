@@ -243,6 +243,14 @@ class SubscriptionManager:
                     item.dynamic_id for item in chronological if item.pubdate == newest_at
                 ]
                 return
+            existing_jobs = data.get("dynamic_jobs", {}).get(origin, {}).get(mid, {})
+            for item in chronological:
+                recorded = existing_jobs.get(item.dynamic_id)
+                if (
+                    recorded is not None and recorded.get("status") not in {"completed", "cancelled"}
+                    and not recorded.get("image_urls") and item.image_urls
+                ):
+                    recorded["image_urls"] = list(item.image_urls)
             seen_at_cursor = set(up.get("last_dynamic_ids", []))
             new_entries = [
                 item for item in chronological
@@ -260,6 +268,7 @@ class SubscriptionManager:
                     DynamicDeliveryJob(
                         dynamic_id=item.dynamic_id, text=item.text, url=item.url,
                         pubdate=item.pubdate, targets=list(dict.fromkeys(targets)),
+                        image_urls=list(item.image_urls),
                     ).to_dict(),
                 )
 

@@ -40,6 +40,12 @@ logger = get_logger("BiliVideo/API")
 
 _HIGHLIGHT_RE = re.compile(r'</?em[^>]*>')
 _BILIBILI_ID_RE = re.compile(r"[0-9]{1,20}")
+_DYNAMIC_IMAGE_URL_RE = re.compile(
+    r"(?:https?:)?//(i[012]\.hdslb\.com)(/bfs/(?:album|new_dyn)/[a-z0-9_-]{1,128}"
+    r"\.(?:jpe?g|png|gif|webp|bmp|avif)(?:@[a-z0-9_.-]{1,80})?)",
+    re.IGNORECASE | re.ASCII,
+)
+DYNAMIC_IMAGE_LIMIT = 9
 _DYNAMIC_PAGE_LIMIT = 20
 _NON_POST_DYNAMIC_TYPES = {"DYNAMIC_TYPE_NONE", "DYNAMIC_TYPE_AD", "DYNAMIC_TYPE_BANNER"}
 
@@ -52,6 +58,7 @@ class LatestDynamic:
     url: str
     kind: str
     bvid: str = ""
+    image_urls: tuple[str, ...] = ()
 
 
 def _strip_highlight(text: str) -> str:
@@ -166,6 +173,35 @@ def _as_text(value: object) -> str:
     return value.strip() if isinstance(value, str) else ""
 
 
+def normalize_dynamic_image_url(value: object) -> str:
+    """Accept a public Bilibili dynamic image URL and return its HTTPS form."""
+    match = _DYNAMIC_IMAGE_URL_RE.fullmatch(_as_text(value))
+    if match is None:
+        return ""
+    host, path = match.groups()
+    return f"https://{host.lower()}{path}"
+
+
+def _dynamic_image_urls(major_card: Mapping[str, object], major_type: str) -> tuple[str, ...]:
+    if major_type == "MAJOR_TYPE_OPUS":
+        pictures, url_key = major_card.get("pics"), "url"
+    elif major_type == "MAJOR_TYPE_DRAW":
+        pictures, url_key = major_card.get("items"), "src"
+    else:
+        return ()
+    if not isinstance(pictures, list):
+        return ()
+
+    urls: dict[str, None] = {}
+    for picture in pictures:
+        url = normalize_dynamic_image_url(_as_mapping(picture).get(url_key))
+        if url:
+            urls[url] = None
+            if len(urls) == DYNAMIC_IMAGE_LIMIT:
+                break
+    return tuple(urls)
+
+
 def _parse_space_dynamic(item: object) -> LatestDynamic | None:
     if not isinstance(item, Mapping):
         raise BiliVideoError("B 站动态接口返回了无效条目")
@@ -210,11 +246,11 @@ def _parse_space_dynamic(item: object) -> LatestDynamic | None:
         raise BiliVideoError("B 站动态接口条目缺少有效的编号、时间、类型或正文模块")
 
     desc = _as_text(_as_mapping(content.get("desc")).get("text"))
+    major_card = _as_mapping(major.get(major_type.removeprefix("MAJOR_TYPE_").lower()))
     if kind == "DYNAMIC_TYPE_FORWARD":
         # Let Bilibili enforce the original post's separate visibility limits.
         text = desc or "转发动态"
     else:
-        major_card = _as_mapping(major.get(major_type.removeprefix("MAJOR_TYPE_").lower()))
         title = _as_text(major_card.get("title"))
         summary = _as_text(_as_mapping(major_card.get("summary")).get("text"))
         body = summary or desc or _as_text(major_card.get("desc"))
@@ -227,6 +263,7 @@ def _parse_space_dynamic(item: object) -> LatestDynamic | None:
         url=f"https://t.bilibili.com/{dynamic_id}",
         kind=kind,
         bvid=bvid if kind == "DYNAMIC_TYPE_AV" and BV_REGEX.fullmatch(bvid) else "",
+        image_urls=_dynamic_image_urls(major_card, major_type),
     )
 
 

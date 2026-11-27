@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from bilivideo.access.keyed_lock import KeyedLocks
+from bilivideo.api.dynamic_images import DynamicImageDownloadError
 from bilivideo.api.endpoints import LatestDynamic
 from bilivideo.core.exceptions import NetworkError, RiskControlError
 from bilivideo.handlers import dynamic_push as push
@@ -99,6 +100,79 @@ async def test_partial_dynamic_delivery_resumes_without_resending_receipt(servic
     assert send.await_count == 1 and send.await_args.args[0] == TARGET_B
     (job,) = await services.subscription_manager.get_dynamic_jobs(ORIGIN, MID)
     assert job.status == "completed" and job.delivered == [TARGET_A, TARGET_B]
+
+
+@pytest.mark.asyncio
+async def test_onebot_image_dynamic_sends_a_single_forward_and_persists_receipt(services, monkeypatch):
+    sub = await subscribe(services)
+    url = "https://i0.hdslb.com/bfs/new_dyn/photo.png"
+    item = replace(dynamic(), image_urls=(url,))
+    push.get_latest_dynamics.return_value = [item]
+    platform = SimpleNamespace(meta=lambda: SimpleNamespace(name="aiocqhttp"))
+    lookup = services.astrbot_context.get_platform_inst = MagicMock(return_value=platform)
+    services.config = SimpleNamespace(forward_bot_name="Mock Bot", forward_bot_uin="0")
+    download = AsyncMock(return_value=[b"sample"])
+    build = MagicMock(return_value=object())
+    monkeypatch.setattr(push, "download_dynamic_images", download)
+    monkeypatch.setattr(push, "build_dynamic_forward_nodes", build)
+
+    assert await push.dynamic_push_callback(services, ORIGIN, sub) == 1
+
+    lookup.assert_called_once_with(ORIGIN)
+    download.assert_awaited_once_with([url])
+    text, images = build.call_args.args
+    assert "北京时间 " in text and text.endswith(item.url)
+    assert images == [b"sample"]
+    services.astrbot_context.send_message.assert_awaited_once_with(ORIGIN, {"chain": [build.return_value]})
+    (job,) = await services.subscription_manager.get_dynamic_jobs(ORIGIN, MID)
+    assert job.image_urls == [url]
+    assert job.status == "completed" and job.delivered == [ORIGIN]
+
+
+@pytest.mark.asyncio
+async def test_older_pending_dynamic_gains_images_and_retries_after_download_failure(services, monkeypatch):
+    sub = await subscribe(services)
+    item = dynamic()
+    push.get_latest_dynamics.return_value = [item]
+    send = services.astrbot_context.send_message
+    send.return_value = False
+    assert await push.dynamic_push_callback(services, ORIGIN, sub) == 0
+
+    image_url = "https://i0.hdslb.com/bfs/album/photo.png"
+    push.get_latest_dynamics.return_value = [replace(item, image_urls=(image_url,))]
+    services.astrbot_context.get_platform_inst = lambda _id: SimpleNamespace(
+        meta=lambda: SimpleNamespace(name="aiocqhttp")
+    )
+    services.config = SimpleNamespace(forward_bot_name="Mock Bot", forward_bot_uin="0")
+    download = AsyncMock(side_effect=DynamicImageDownloadError("http_status"))
+    monkeypatch.setattr(push, "download_dynamic_images", download)
+    send.reset_mock()
+    send.return_value = True
+
+    assert (await push.check_dynamics(services, ORIGIN, sub, force=True)).delivered == 0
+
+    send.assert_not_awaited()
+    (job,) = await services.subscription_manager.get_dynamic_jobs(ORIGIN, MID)
+    assert job.image_urls == [image_url] and job.status == "retry" and job.delivered == []
+    assert job.error_kind == "DynamicImageDownloadError"
+
+
+@pytest.mark.asyncio
+async def test_image_dynamic_on_other_adapter_preserves_plain_notification(services, monkeypatch):
+    sub = await subscribe(services)
+    item = replace(dynamic(), image_urls=("https://i0.hdslb.com/bfs/new_dyn/photo.png",))
+    push.get_latest_dynamics.return_value = [item]
+    services.astrbot_context.get_platform_inst = lambda _id: SimpleNamespace(
+        meta=lambda: SimpleNamespace(name="telegram")
+    )
+    download = AsyncMock()
+    monkeypatch.setattr(push, "download_dynamic_images", download)
+
+    assert await push.dynamic_push_callback(services, ORIGIN, sub) == 1
+
+    download.assert_not_awaited()
+    (text,) = services.astrbot_context.send_message.await_args.args[1]["chain"]
+    assert text.endswith(item.url)
 
 
 @pytest.mark.asyncio

@@ -1,4 +1,4 @@
-"""Discover public space dynamics and deliver durable plain-text notifications."""
+"""Discover public space dynamics and deliver durable notifications."""
 
 from __future__ import annotations
 
@@ -7,8 +7,10 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+from ..api.dynamic_images import download_dynamic_images
 from ..api.endpoints import get_latest_dynamics
 from ..core.exceptions import BiliVideoError, RiskControlError
+from ..messaging.forward import build_dynamic_forward_nodes
 from ..services import BiliVideoServices
 from ..subscription.dynamic_delivery import DynamicDeliveryJob
 from ..subscription.manager import Subscription
@@ -115,6 +117,9 @@ async def _deliver_dynamic(
         return False
 
     text = _dynamic_text(sub, job)
+    plain_message = MessageChain(chain=[Plain(text)])
+    forward_message = None
+    image_error = ""
     for target in job.targets:
         if target in job.delivered or target in job.withdrawn:
             continue
@@ -122,10 +127,32 @@ async def _deliver_dynamic(
             return False
         if target in job.withdrawn:
             continue
+        message = plain_message
+        use_forward = bool(job.image_urls) and _is_onebot_target(services, target)
+        if use_forward:
+            if image_error:
+                job.error_kind = image_error
+                continue
+            if forward_message is None:
+                try:
+                    images = await download_dynamic_images(job.image_urls)
+                    forward = build_dynamic_forward_nodes(
+                        text, images, bot_name=services.config.forward_bot_name,
+                        bot_uin=services.config.forward_bot_uin,
+                    )
+                    forward_message = MessageChain(chain=[forward])
+                except Exception as exc:
+                    image_error = job.error_kind = type(exc).__name__
+                    services.logger.warning(f"dynamic image preparation failed: {image_error}")
+                    continue
+                # A target can be revoked while its images are downloading.
+                if not await _refresh_targets(services, origin, sub.mid, job):
+                    return False
+                if target in job.withdrawn:
+                    continue
+            message = forward_message
         try:
-            result = await services.astrbot_context.send_message(
-                target, MessageChain(chain=[Plain(text)])
-            )
+            result = await services.astrbot_context.send_message(target, message)
         except Exception as exc:
             job.error_kind = type(exc).__name__
             services.logger.warning(f"dynamic send failed: {job.error_kind}")
@@ -134,6 +161,8 @@ async def _deliver_dynamic(
                 job.error_kind = "SendNotConfirmed"
                 continue
             job.delivered.append(target)
+            if use_forward:
+                services.logger.info(f"dynamic image forward confirmed: {len(job.image_urls)} images")
             if job.all_delivered:
                 return await _complete_dynamic(services, origin, sub.mid, job)
             # Persist each confirmed target before attempting the next send.
@@ -146,6 +175,14 @@ async def _deliver_dynamic(
     if await manager.save_dynamic_job(origin, sub.mid, job) and job.status != "cancelled":
         services.logger.warning(f"dynamic delivery incomplete ({job.status}): {job.error_kind}")
     return False
+
+
+def _is_onebot_target(services: BiliVideoServices, target: str) -> bool:
+    lookup = getattr(services.astrbot_context, "get_platform_inst", None)
+    if not callable(lookup):
+        return False
+    platform = lookup(target.partition(":")[0])
+    return platform is not None and platform.meta().name == "aiocqhttp"
 
 
 async def _refresh_targets(

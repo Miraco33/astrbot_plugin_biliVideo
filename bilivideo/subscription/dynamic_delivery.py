@@ -21,6 +21,7 @@ class DynamicDeliveryJob:
     next_retry_at: float = 0
     status: str = "pending"
     error_kind: str = ""
+    image_urls: list[str] = field(default_factory=list)
 
     @classmethod
     def from_mapping(cls, raw: dict[str, Any]) -> DynamicDeliveryJob:

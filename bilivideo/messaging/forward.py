@@ -1,8 +1,4 @@
-"""Single source of truth for building forward-message Nodes.
-
-The previous implementation duplicated this logic in four places; here we
-expose a single function that the handler layer invokes.
-"""
+"""Builders for AstrBot forward-message nodes."""
 
 from __future__ import annotations
 
@@ -54,6 +50,22 @@ def _summary_nodes(
             label = summary_label if image_idx == 1 else f"{summary_label}(第 {image_idx} 页)"
         nodes.append(Node(content=[Plain(label), comp], name=bot_name, uin=bot_uin))
     return nodes
+
+
+def build_dynamic_forward_nodes(
+    text: str,
+    images: Sequence[bytes],
+    *,
+    bot_name: str,
+    bot_uin: str,
+) -> Any:
+    """Pack one node per dynamic image followed by the original push text."""
+    if Node is None:
+        raise RuntimeError("AstrBot message components are unavailable")
+
+    nodes = [Node(content=[Image.fromBytes(image)], name=bot_name, uin=bot_uin) for image in images]
+    nodes.append(Node(content=[Plain(text)], name=bot_name, uin=bot_uin))
+    return Nodes(nodes=nodes)
 
 
 def build_video_forward_nodes(

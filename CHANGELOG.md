@@ -4,6 +4,10 @@ All notable changes to this plugin are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v2.3.4 (2026-11-27) — 动态配图合并转发
+
+- QQ OneBot 的图文动态使用一条合并转发，按原顺序带上配图，末尾保留北京时间、正文和原链接。图片准备失败后继续使用现有投递重试。
+
 ## v2.3.3 (2026-11-27) — 缩短动态通知等待时间
 
 - 动态改用独立的检查间隔，默认 5 分钟。原视频间隔沿用现有配置。

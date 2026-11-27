@@ -46,10 +46,22 @@ async def test_space_dynamics_parse_and_deduplicate_by_id() -> None:
         "102",
         101,
         kind="DYNAMIC_TYPE_DRAW",
-        major={"type": "MAJOR_TYPE_OPUS", "opus": {"summary": {"text": "   图文正文\n第二行  "}}},
+        major={
+            "type": "MAJOR_TYPE_OPUS",
+            "opus": {
+                "summary": {"text": "   图文正文\n第二行  "},
+                "pics": [{"url": "http://i0.hdslb.com/bfs/new_dyn/mock-opus.png"}],
+            },
+        },
     )
     image_only = _item(
-        "103", 102, kind="DYNAMIC_TYPE_DRAW", major={"type": "MAJOR_TYPE_DRAW", "draw": {"items": [{}]}}
+        "103",
+        102,
+        kind="DYNAMIC_TYPE_DRAW",
+        major={
+            "type": "MAJOR_TYPE_DRAW",
+            "draw": {"items": [{"src": "//i2.hdslb.com/bfs/album/mock-draw.jpg"}]},
+        },
     )
     article = _item(
         "104",
@@ -58,13 +70,20 @@ async def test_space_dynamics_parse_and_deduplicate_by_id() -> None:
         major={"type": "MAJOR_TYPE_ARTICLE", "article": {"title": "专栏标题", "desc": "专栏摘要"}},
     )
     forward = _item("105", 103, kind="DYNAMIC_TYPE_FORWARD", text="转发语")
-    forward["orig"] = _item("999", 10, text="原文不应进入推送")
+    forward["orig"] = image
     no_comment = _item("106", 104, kind="DYNAMIC_TYPE_FORWARD")
     video = _item(
         "107",
         105,
         kind="DYNAMIC_TYPE_AV",
-        major={"type": "MAJOR_TYPE_ARCHIVE", "archive": {"title": "视频标题", "bvid": "BV1xx411c7mD"}},
+        major={
+            "type": "MAJOR_TYPE_ARCHIVE",
+            "archive": {
+                "title": "视频标题",
+                "bvid": "BV1xx411c7mD",
+                "cover": "https://i0.hdslb.com/bfs/new_dyn/mock-cover.png",
+            },
+        },
     )
     items = [pinned, image, image_only, article, forward, no_comment, video, _item("101", 100, text="旧动态")]
     client = _client({"code": 0, "data": {"items": items}})
@@ -81,6 +100,10 @@ async def test_space_dynamics_parse_and_deduplicate_by_id() -> None:
         ("101", 100, "旧动态", ""),
     ]
     assert result[0].kind == "DYNAMIC_TYPE_AV"
+    assert {item.dynamic_id: item.image_urls for item in result if item.image_urls} == {
+        "102": ("https://i0.hdslb.com/bfs/new_dyn/mock-opus.png",),
+        "103": ("https://i2.hdslb.com/bfs/album/mock-draw.jpg",),
+    }
     assert all(item.url == f"https://t.bilibili.com/{item.dynamic_id}" for item in result)
     client.request_json.assert_awaited_once_with(
         "GET",
@@ -88,6 +111,35 @@ async def test_space_dynamics_parse_and_deduplicate_by_id() -> None:
         params={"host_mid": "123", "offset": "", "platform": "web", "features": "itemOpusStyle"},
         headers={"Referer": "https://space.bilibili.com/123/dynamic"},
     )
+
+
+async def test_space_dynamics_keep_order_of_first_nine_safe_images() -> None:
+    first = "https://i0.hdslb.com/bfs/new_dyn/mock-example.png"
+    remaining = [f"https://i1.hdslb.com/bfs/new_dyn/mock-{index}.png" for index in range(12)]
+    unsafe = [
+        "file:///local.png",
+        "https://i0.hdslb.com.example.com/bfs/album/mock.png",
+        "https://example.com/bfs/album/mock.png",
+        "https://i0.hdslb.com:444/bfs/album/mock.png",
+        "https://i0.hdslb.com/bfs/album/mock.png?sample=value",
+        "https://i0.hdslb.com/bfs/album/mock.png#fragment",
+        "https://mock-user@i0.hdslb.com/bfs/album/mock.png",
+        "https://i0.hdslb.com/bfs/album/../mock.png",
+        "https://i0.hdslb.com/bfs/album/mock.svg",
+        "https://i0.hdslb.com/bfs/face/mock.png",
+        "https://i0.hdslb.com/bfs/album/mock\n.png",
+        123,
+    ]
+    pictures = [None, {"live_url": first}]
+    pictures.extend(
+        {"url": url} for url in [*unsafe, first, "//I0.hdslb.com/bfs/new_dyn/mock-example.png", *remaining]
+    )
+    dynamic = _item(
+        "101", 100, kind="DYNAMIC_TYPE_DRAW", major={"type": "MAJOR_TYPE_OPUS", "opus": {"pics": pictures}}
+    )
+    result = await get_latest_dynamics(_client({"code": 0, "data": {"items": [dynamic]}}), "123")
+
+    assert result[0].image_urls == (first, *remaining[:8])
 
 
 async def test_space_dynamics_accept_numeric_strings_from_current_space_feed() -> None:
@@ -113,7 +165,16 @@ async def test_space_dynamics_accept_numeric_strings_from_current_space_feed() -
 async def test_space_dynamics_skip_restricted_and_unavailable_posts() -> None:
     hidden = {"visible": False}
     invalid = {"type": "DYNAMIC_TYPE_NONE"}
-    supporter = _item("101", 100, text="会员内容")
+    supporter = _item(
+        "101",
+        100,
+        text="会员内容",
+        kind="DYNAMIC_TYPE_DRAW",
+        major={
+            "type": "MAJOR_TYPE_OPUS",
+            "opus": {"pics": [{"url": "https://i0.hdslb.com/bfs/new_dyn/mock-protected.png"}]},
+        },
+    )
     supporter["modules"]["module_author"]["icon_badge"] = {"text": "充电专属"}
     lottery = _item("102", 101, text="专属抽奖")
     lottery["modules"]["module_dynamic"]["additional"] = {"type": "ADDITIONAL_TYPE_UPOWER_LOTTERY"}
